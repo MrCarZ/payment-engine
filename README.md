@@ -2,7 +2,7 @@
 
 A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
-## Current status: Phase 3
+## Current status: Phase 4
 
 The crate and component boundaries are established. The binary validates exactly
 one input-path argument. It does not open files or process payments yet. A valid
@@ -28,8 +28,17 @@ before committing changes; failures leave balances and lock status unchanged.
 Withdrawals use only available funds. Holds may make available funds negative;
 releases and chargebacks require sufficient held funds. Chargebacks lock the
 account permanently, blocking new deposits and withdrawals while allowing
-lifecycle operations. Transaction ownership and dispute-state validation will
-be introduced in subsequent phases; account methods enforce balance rules only.
+lifecycle operations. Account methods enforce balance rules only.
+
+Accepted originals are represented by `Transaction`, retaining ID, owner, type,
+amount, and lifecycle state. Only deposits can transition from posted to disputed;
+resolution returns them to posted, and chargeback is terminal. Repeated or
+inapplicable actions return typed transition errors. `transition` returns a new
+candidate without mutating the original or touching balances. The manager in the
+next phase will verify ownership and commit account and transaction changes
+together. Rejected originals must not be constructed as posted transactions. The public
+`domain::transaction` module scopes the `State` and `Type` enums; consumers import
+them directly or alias them when other domain types would conflict.
 
 ```sh
 cargo build
