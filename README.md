@@ -2,12 +2,11 @@
 
 A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
-## Current status: Phase 12
+## Current status: Phase 13
 
-The binary accepts exactly one input path, streams its CSV rows through the
-payment manager, and writes sorted account balances to stdout. Structured traces
-are written to a separate CSV sidecar; diagnostics and its path use stderr.
-The bootstrap is synchronous and processes one CSV per invocation.
+The binary streams one CSV synchronously or processes multiple validated CSVs
+concurrently. Account balances use stdout; trace files use per-run directories
+under `output`. Diagnostics and trace locations use stderr.
 
 The domain now exposes distinct client (`u16`) and transaction (`u32`) identifiers,
 signed `Money`, and strictly positive `PositiveAmount` transaction amounts.
@@ -212,14 +211,6 @@ failure may occur after complete account output, and still yields a failure exit
 status. A Completed summary describes processing/output completion, not a
 guarantee that the final trace flush succeeded. Flush is not durable storage.
 
-`bootstrap::payment::execute` opens the input and creates
-`<input-path>.<run-id>.trace.csv` with exclusive creation. The run ID combines a
-UTC nanosecond timestamp, process ID, and process-local sequence. Existing traces
-and input files are never overwritten. The input directory must allow creation
-of the sidecar. Setup failures stop before processing; failures before the trace
-service is initialized cannot produce a summary. Bootstrap failures include the
-trace path in stderr diagnostics. Generated sidecars are ignored by Git.
-
 ```sh
 cargo run -- transactions.csv > accounts.csv
 ```
@@ -227,9 +218,8 @@ cargo run -- transactions.csv > accounts.csv
 Success exits with status zero; argument, setup, processing, output, and trace
 failures exit with a nonzero status. The CLI supplies the input path as source
 identity and leaves partner identity absent. Library callers can supply their
-own run/source/partner context and destinations through `run`. Batch contract
-validation is available through the library; concurrent execution remains for
-Phase 13. The CLI still accepts exactly one CSV path.
+own run/source/partner context and destinations through `run`. Multiple input
+paths select concurrent batch execution after full preflight validation.
 
 Bootstrap files are organized by responsibility:
 
@@ -296,5 +286,25 @@ can process the exact validated snapshot without reopening mutable files.
 This preflight API buffers all batch records in memory; the existing single-CSV
 CLI continues to stream. Bounded-memory batch input is a future extension.
 
-Phase 12 introduces the contract and CSV preflight only. Worker scheduling,
-parallel processing, aggregate output, and batch CLI wiring belong to Phase 13.
+
+
+## Concurrent batch execution
+
+`bootstrap::payment::batch::execution` executes the validated snapshots in bounded
+groups of scoped OS threads. Each source owns its payment manager and trace sink;
+workers share no financial state. Rows retain their source order, while ordering
+between sources is unspecified. Reports retain input order and aggregate account
+output is sorted by client ID. The CLI uses available parallelism, falling back
+to one worker; library callers can supply a nonzero worker limit.
+
+CLI inputs are opened and canonicalized to reject duplicate files. All sources
+are parsed and validated before trace initialization or payment processing.
+If a worker fails, its active peers finish and later groups are skipped. A worker
+panic is reported as a failure. Processing failures suppress aggregate account
+output; final trace failures can occur after account output. Every initialized
+sink is finalized without retrying financial operations. The worker bound limits
+active processing, not buffered input memory or the number of open trace files.
+
+```sh
+cargo run -- first.csv second.csv
+```

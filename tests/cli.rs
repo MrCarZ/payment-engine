@@ -1,7 +1,7 @@
 use std::{
     env::temp_dir,
     fs::{create_dir, read, read_dir, remove_dir, remove_file, write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Output, id},
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
@@ -38,37 +38,67 @@ impl Fixture {
 
     fn invoke(&self) -> Output {
         Command::new(env!("CARGO_BIN_EXE_payment-engine"))
+            .current_dir(&self.directory)
             .arg(&self.input)
             .output()
             .unwrap()
     }
 
     fn traces(&self) -> Vec<PathBuf> {
-        read_dir(&self.directory)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
+        self.runs()
+            .into_iter()
+            .flat_map(|directory| {
+                read_dir(directory)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .collect::<Vec<_>>()
+            })
             .filter(|path| path.to_string_lossy().ends_with(".trace.csv"))
             .collect()
+    }
+
+    fn runs(&self) -> Vec<PathBuf> {
+        let output = self.directory.join("output");
+        if !output.exists() {
+            return Vec::new();
+        }
+        read_dir(output)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect()
+    }
+}
+
+fn cleanup(path: &Path, root: &Path) {
+    let resolved = path.canonicalize().unwrap();
+    assert!(
+        resolved.starts_with(root),
+        "fixture cleanup must stay in its verified root"
+    );
+    if resolved.is_dir() {
+        for entry in read_dir(&resolved).unwrap() {
+            cleanup(&entry.unwrap().path(), root);
+        }
+        remove_dir(&resolved).unwrap();
+    } else {
+        remove_file(&resolved).unwrap();
     }
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        // Only this fixture's immediate files; no recursive cleanup.
-        for entry in read_dir(&self.directory).unwrap() {
-            let path = entry.unwrap().path();
-            assert_eq!(path.parent(), Some(self.directory.as_path()));
-            remove_file(path).unwrap();
-        }
-        remove_dir(&self.directory).unwrap();
+        let root = self.directory.canonicalize().unwrap();
+        cleanup(&root, &root);
     }
 }
 
 #[rstest]
 #[case::missing_input(&[], "Usage:")]
-#[case::extra_arguments(&["first.csv", "second.csv"], "exactly one input path")]
-fn cli_rejects_invalid_arguments(#[case] args: &[&str], #[case] diagnostic: &str) {
+#[case::missing_batch_files(&["first.csv", "second.csv"], "cannot open input")]
+fn cli_rejects_missing_arguments_or_files(#[case] args: &[&str], #[case] diagnostic: &str) {
+    let fixture = Fixture::new("");
     let output = Command::new(env!("CARGO_BIN_EXE_payment-engine"))
+        .current_dir(&fixture.directory)
         .args(args)
         .output()
         .unwrap();
@@ -124,6 +154,7 @@ fn repeated_invocations_preserve_existing_traces_and_input() {
     let original = read(&original_path).unwrap();
     assert!(fixture.invoke().status.success());
     assert_eq!(fixture.traces().len(), 2);
+    assert_eq!(fixture.runs().len(), 2);
     assert_eq!(read(original_path).unwrap(), original);
     assert_eq!(read(&fixture.input).unwrap(), csv.as_bytes());
 }
@@ -153,6 +184,7 @@ fn cli_handles_empty_and_invalid_inputs(#[case] csv: &str, #[case] success: bool
 fn missing_file_fails_without_stdout_or_trace() {
     let fixture = Fixture::new("");
     let output = Command::new(env!("CARGO_BIN_EXE_payment-engine"))
+        .current_dir(&fixture.directory)
         .arg(fixture.directory.join("missing.csv"))
         .output()
         .unwrap();
@@ -160,4 +192,112 @@ fn missing_file_fails_without_stdout_or_trace() {
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot open input"));
     assert!(fixture.traces().is_empty());
+}
+
+#[test]
+fn cli_processes_disjoint_csvs_with_shared_run_identity_and_separate_traces() {
+    let fixture = Fixture::new(include_str!("fixtures/input/payments.csv"));
+    let other = fixture.directory.join("second.csv");
+    write(&other, "type,client,tx,amount\ndeposit,2,77,2\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_payment-engine"))
+        .current_dir(&fixture.directory)
+        .args([&fixture.input, &other])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "client,available,held,total,locked\n2,2.0000,0.0000,2.0000,false\n3,4.0000,0.0000,4.0000,false\n9,4.0000,0.0000,4.0000,false\n"
+    );
+    let traces = fixture.traces();
+    assert_eq!(traces.len(), 2);
+    let mut run_ids = Vec::new();
+    let mut applied = 0;
+    for path in traces {
+        let bytes = read(path).unwrap();
+        let records: Vec<_> = Reader::from_reader(bytes.as_slice())
+            .records()
+            .map(Result::unwrap)
+            .collect();
+        let summary = records.last().unwrap();
+        assert_eq!(&summary[3], "payment.run_finished");
+        let attributes: Value = from_str(&summary[6]).unwrap();
+        assert_eq!(attributes["status"], "completed");
+        applied += attributes["applied"].as_u64().unwrap();
+        run_ids.push(summary[4].to_owned());
+    }
+    assert_eq!(applied, 6);
+    assert_eq!(run_ids[0], run_ids[1]);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr)
+            .matches("Trace log:")
+            .count(),
+        2
+    );
+}
+
+#[rstest]
+#[case("type,client,tx,amount\ndeposit,1,2,3\n", "client 1")]
+#[case("type,client,tx,amount\ndeposit,2,1,3\n", "original transaction 1")]
+#[case("type,client,tx,amount\nresolve,2,1,\n", "references transaction 1")]
+#[case("type,client,tx,amount\ndeposit,2,2,bad\n", "batch input failed")]
+fn batch_preflight_failures_create_no_traces_or_account_output(
+    #[case] csv: &str,
+    #[case] diagnostic: &str,
+) {
+    let fixture = Fixture::new("type,client,tx,amount\ndeposit,1,1,5\n");
+    let other = fixture.directory.join("second.csv");
+    write(&other, csv).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_payment-engine"))
+        .current_dir(&fixture.directory)
+        .args([&fixture.input, &other])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(fixture.traces().is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains(diagnostic));
+}
+
+#[test]
+fn duplicate_batch_input_is_rejected_before_trace_setup() {
+    let fixture = Fixture::new("type,client,tx,amount\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_payment-engine"))
+        .current_dir(&fixture.directory)
+        .args([
+            &fixture.input,
+            &fixture.directory.join(".").join("payments with spaces.csv"),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(fixture.traces().is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("duplicate batch source"));
+}
+
+#[test]
+fn failed_batch_worker_suppresses_aggregate_accounts_and_keeps_traces() {
+    let fixture = Fixture::new(
+        "type,client,tx,amount\ndeposit,1,1,17014118346046923173168730371588410.5727\ndeposit,1,2,1\n",
+    );
+    let other = fixture.directory.join("second.csv");
+    write(&other, "type,client,tx,amount\ndeposit,2,3,1\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_payment-engine"))
+        .current_dir(&fixture.directory)
+        .args([&fixture.input, &other])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_eq!(fixture.traces().len(), 2);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("batch source processing failed"));
+    for path in fixture.traces() {
+        let csv = String::from_utf8(read(path).unwrap()).unwrap();
+        assert!(csv.contains("payment.run_finished"));
+    }
 }

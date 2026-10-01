@@ -22,6 +22,9 @@ use crate::{
 
 #[derive(Debug)]
 pub enum Failure {
+    Cancelled,
+    WorkerPanicked,
+    WorkerSpawn(IoError),
     File {
         operation: &'static str,
         path: PathBuf,
@@ -72,6 +75,9 @@ impl From<CoordinatorFailure<Record, InputError>> for Failure {
 impl Display for Failure {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
+            Self::Cancelled => f.write_str("source skipped after batch failure"),
+            Self::WorkerPanicked => f.write_str("payment worker panicked"),
+            Self::WorkerSpawn(error) => write!(f, "cannot start payment worker: {error}"),
             Self::File {
                 operation,
                 path,
@@ -100,6 +106,8 @@ impl Display for Failure {
 impl Error for Failure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Cancelled | Self::WorkerPanicked => None,
+            Self::WorkerSpawn(error) => Some(error),
             Self::File { error, .. } => Some(error),
             Self::Input(error) => Some(error),
             Self::Processing { error, .. } => Some(error),

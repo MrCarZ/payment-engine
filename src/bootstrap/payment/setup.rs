@@ -1,6 +1,6 @@
 use std::{
-    fs::{File, OpenOptions},
-    path::PathBuf,
+    fs::{File, OpenOptions, create_dir, create_dir_all},
+    path::{Path, PathBuf},
     process::id,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -27,8 +27,12 @@ pub(super) struct Resources {
 }
 
 /// Constructs resources before processing, preserving non-Unicode paths and
-/// exclusively creating the trace sidecar without overwriting existing files.
-pub(super) fn prepare(config: InputConfig) -> Result<Resources, RunError> {
+/// exclusively creating the trace file without overwriting existing files.
+pub(super) fn prepare(
+    config: InputConfig,
+    directory: &Path,
+    run_id: &str,
+) -> Result<Resources, RunError> {
     let input = File::open(&config.input_path).map_err(|error| {
         RunError::new(
             Failure::File {
@@ -39,15 +43,35 @@ pub(super) fn prepare(config: InputConfig) -> Result<Resources, RunError> {
             Summary::default(),
         )
     })?;
-    let run_id = format!(
+    let (trace, trace_path) = create_trace(directory, 1)?;
+    let source = SourceContext {
+        run_id: run_id.into(),
+        source_id: config.input_path.to_string_lossy().into_owned(),
+        partner_id: None,
+    };
+    Ok(Resources {
+        input,
+        trace,
+        source,
+        trace_path,
+    })
+}
+
+/// Creates an execution identity for source traces and output directories.
+pub(crate) fn new_run_id() -> String {
+    format!(
         "{}-{}-{}",
         SystemClock.now().unix_timestamp_nanos(),
         id(),
         RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    );
-    let mut name = config.input_path.as_os_str().to_os_string();
-    name.push(format!(".{run_id}.trace.csv"));
-    let trace_path = PathBuf::from(name);
+    )
+}
+
+pub(super) fn create_trace(
+    directory: &Path,
+    source_index: usize,
+) -> Result<(CsvTraceService<File>, PathBuf), RunError> {
+    let trace_path = directory.join(format!("source-{source_index:04}.trace.csv"));
     let trace_file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -67,15 +91,22 @@ pub(super) fn prepare(config: InputConfig) -> Result<Resources, RunError> {
         failure.trace_path = Some(trace_path.clone());
         failure
     })?;
-    let source = SourceContext {
-        run_id,
-        source_id: config.input_path.to_string_lossy().into_owned(),
-        partner_id: None,
-    };
-    Ok(Resources {
-        input,
-        trace,
-        source,
-        trace_path,
-    })
+    Ok((trace, trace_path))
+}
+
+pub(crate) fn create_run_directory(root: &Path, run_id: &str) -> Result<PathBuf, RunError> {
+    let directory = root.join(run_id);
+    create_dir_all(root)
+        .and_then(|()| create_dir(&directory))
+        .map_err(|error| {
+            RunError::new(
+                Failure::File {
+                    operation: "create run directory",
+                    path: directory.clone(),
+                    error,
+                },
+                Summary::default(),
+            )
+        })?;
+    Ok(directory)
 }

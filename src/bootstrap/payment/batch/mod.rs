@@ -11,7 +11,9 @@ use crate::{
 };
 
 mod error;
+mod execution;
 pub use error::BatchError;
+pub use execution::{Execution, ExecutionError, Report, SourceReport, execute, run};
 
 /// Every source is fully parsed and validated before returning. Input errors
 /// stop preflight; no accounts, output, trace files, or worker threads are created.

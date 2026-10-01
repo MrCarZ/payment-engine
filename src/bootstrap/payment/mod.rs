@@ -3,7 +3,7 @@
 use std::{
     io::{Read, Write},
     iter::once,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use crate::{
@@ -24,10 +24,10 @@ use crate::{
 
 pub mod batch;
 mod error;
-mod setup;
+pub(crate) mod setup;
 
 pub use error::{Failure, RunError};
-use setup::prepare;
+use setup::{create_run_directory, new_run_id, prepare};
 
 #[derive(Debug)]
 pub struct Execution {
@@ -37,7 +37,18 @@ pub struct Execution {
 
 /// Constructs resources, then connects the CSV adapters and payment coordinator.
 pub fn execute(config: InputConfig, output: impl Write) -> Result<Execution, RunError> {
-    let resources = prepare(config)?;
+    let run_id = new_run_id();
+    let directory = create_run_directory(Path::new("output"), &run_id)?;
+    execute_at(config, output, &directory, &run_id)
+}
+
+pub(crate) fn execute_at(
+    config: InputConfig,
+    output: impl Write,
+    directory: &Path,
+    run_id: &str,
+) -> Result<Execution, RunError> {
+    let resources = prepare(config, directory, run_id)?;
     let mut trace = resources.trace;
     let summary =
         run(resources.input, output, resources.source, &mut trace).map_err(|mut error| {
@@ -82,6 +93,16 @@ fn finish(
     } else {
         State::Failed
     };
+    finish_as(source, summary, state, result, trace)
+}
+
+fn finish_as(
+    source: &SourceContext,
+    summary: Summary,
+    state: State,
+    result: Result<(), Failure>,
+    trace: &mut dyn TraceService,
+) -> Result<Summary, RunError> {
     let mut failure = result.err().map(|failure| RunError::new(failure, summary));
     // Always attempt summary delivery and explicit flush, preserving every error.
     for result in [
