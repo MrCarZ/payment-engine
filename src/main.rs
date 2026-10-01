@@ -1,6 +1,6 @@
 use std::{env::args_os, io::stdout, process::ExitCode};
 
-use payment_engine::bootstrap::{artifacts::execute, config::Invocation};
+use payment_engine::{adapters::cli::config::Invocation, bootstrap::artifacts::execute};
 
 fn main() -> ExitCode {
     match Invocation::from_args(args_os().skip(1)) {

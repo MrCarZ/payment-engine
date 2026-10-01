@@ -1,13 +1,16 @@
 use std::{
-    fs::{File, OpenOptions, create_dir, create_dir_all},
+    fs::File,
     path::{Path, PathBuf},
 };
 
 use uuid::Uuid;
 
 use crate::{
-    adapters::observability::csv::CsvTraceService,
-    bootstrap::config::InputConfig,
+    adapters::{
+        artifacts::filesystem::{create_file, create_run_directory as create_directory},
+        cli::config::InputConfig,
+        observability::csv::CsvTraceService,
+    },
     manager::{
         observability::TraceError,
         payment::{SourceContext, run::Summary},
@@ -84,20 +87,16 @@ pub(super) fn create_trace(
     source_index: usize,
 ) -> Result<(CsvTraceService<File>, PathBuf), RunError> {
     let trace_path = directory.join(format!("source-{source_index:04}.trace.csv"));
-    let trace_file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&trace_path)
-        .map_err(|error| {
-            RunError::new(
-                Failure::File {
-                    operation: "create trace",
-                    path: trace_path.clone(),
-                    error,
-                },
-                Summary::default(),
-            )
-        })?;
+    let trace_file = create_file(&trace_path).map_err(|error| {
+        RunError::new(
+            Failure::File {
+                operation: "create trace",
+                path: trace_path.clone(),
+                error,
+            },
+            Summary::default(),
+        )
+    })?;
     let trace = CsvTraceService::new(trace_file).map_err(|error| {
         let mut failure = RunError::new(Failure::Trace(TraceError::new(error)), Summary::default());
         failure.trace_path = Some(trace_path.clone());
@@ -108,17 +107,15 @@ pub(super) fn create_trace(
 
 pub(crate) fn create_run_directory(root: &Path, run_id: &str) -> Result<PathBuf, RunError> {
     let directory = root.join(run_id);
-    create_dir_all(root)
-        .and_then(|()| create_dir(&directory))
-        .map_err(|error| {
-            RunError::new(
-                Failure::File {
-                    operation: "create run directory",
-                    path: directory.clone(),
-                    error,
-                },
-                Summary::default(),
-            )
-        })?;
+    create_directory(root, run_id).map_err(|error| {
+        RunError::new(
+            Failure::File {
+                operation: "create run directory",
+                path: directory.clone(),
+                error,
+            },
+            Summary::default(),
+        )
+    })?;
     Ok(directory)
 }

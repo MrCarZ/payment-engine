@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    adapters::payment::csv::input::InputError, bootstrap::payment::RunError,
+    adapters::payment::csv::input::InputError, adapters::payment::csv::processing::RunError,
     manager::payment::batch::ValidationError,
 };
 

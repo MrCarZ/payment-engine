@@ -3,7 +3,10 @@ use std::io::Write;
 use csv::WriterBuilder;
 use serde::Serialize;
 
-use crate::domain::payment::{Account, ClientId};
+use crate::{
+    domain::payment::{Account, ClientId},
+    manager::payment::run::Output as AccountOutput,
+};
 
 mod error;
 
@@ -56,3 +59,20 @@ pub fn write<'a>(
 
 #[cfg(test)]
 mod tests;
+
+/// CSV implementation of the manager's account publication contract.
+pub struct Output<W>(W);
+impl<W> Output<W> {
+    pub fn new(writer: W) -> Self {
+        Self(writer)
+    }
+}
+impl<W: Write> AccountOutput for Output<W> {
+    type Error = OutputError;
+    fn publish<'a>(
+        &mut self,
+        accounts: impl IntoIterator<Item = (ClientId, &'a Account)>,
+    ) -> Result<(), Self::Error> {
+        write(&mut self.0, accounts)
+    }
+}

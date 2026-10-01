@@ -7,7 +7,10 @@ use std::{
 
 use serde_json::Error as JsonError;
 
-use crate::bootstrap::payment::{RunError, batch::BatchError};
+use crate::adapters::{
+    artifacts::Error as StorageError,
+    payment::csv::processing::{RunError, batch::BatchError},
+};
 
 #[derive(Debug)]
 pub enum ArtifactError {
@@ -72,6 +75,15 @@ impl Error for ArtifactError {
             Self::Batch(error) => Some(error.as_ref()),
             Self::Additional { primary, .. } => Some(primary.as_ref()),
             Self::Run { error, .. } => Some(error.as_ref()),
+        }
+    }
+}
+
+impl From<StorageError> for ArtifactError {
+    fn from(error: StorageError) -> Self {
+        match error {
+            StorageError::Io(error) => Self::Io(error),
+            StorageError::Json(error) => Self::Json(error),
         }
     }
 }

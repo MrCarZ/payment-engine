@@ -382,3 +382,23 @@ single and batch entry points delegate execution policy to managers. A local
 CSV output implementation satisfies the publication contract; compatibility
 error/report mappings retain existing CSV provenance and CLI behavior. Moving
 these concrete I/O responsibilities into adapters is a separate follow-up step.
+
+## Adapter-owned CLI, CSV composition, and artifacts
+
+Argument parsing and invocation configuration live in `adapters/cli/config`.
+CSV reader/file composition, preflight reader handling, trace setup, and typed
+CSV error/report conversion live in `adapters/payment/csv/processing`. The CSV
+output adapter implements the manager's account publication contract. CSV
+position metadata is declared in `adapters/payment/csv/position.rs` and exported
+through the CSV module.
+
+`adapters/artifacts/filesystem.rs` owns exclusive directory/file creation,
+partial account publication, trace discovery, and the file/stdout tee writer.
+`adapters/artifacts/report` defines typed serialized reports, source results,
+outcome counts, and completion status. Artifact persistence writes JSON and
+diagnostics while preserving the existing filename-only report schema.
+
+Bootstrap retains invocation composition and compatibility exports for its
+previous configuration and payment APIs. Adapters depend on managers and other
+adapters, never on bootstrap. Removing compatibility modules and completing the
+composition-root cleanup is reserved for the next refactor step.

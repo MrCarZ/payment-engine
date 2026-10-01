@@ -9,11 +9,14 @@ use std::{
 };
 
 use crate::{
-    adapters::payment::csv::{input::Record, output::OutputError},
-    bootstrap::{
-        config::BatchConfig,
-        payment::{
-            CsvOutput, Failure as SourceFailure, RunError,
+    adapters::payment::csv::{
+        input::Record,
+        output::{Output as CsvOutput, OutputError},
+    },
+    adapters::{
+        cli::config::BatchConfig,
+        payment::csv::processing::{
+            Failure as SourceFailure, RunError,
             setup::{create_run_directory, create_trace, new_run_id, source_id},
         },
     },
@@ -139,7 +142,7 @@ pub fn run<T: TraceService + Send>(
     workers: NonZeroUsize,
     trace_factory: impl FnMut(&SourceContext) -> Result<T, TraceError>,
 ) -> Result<Report, ExecutionError> {
-    run_batch(batch, &mut CsvOutput(output), workers, trace_factory)
+    run_batch(batch, &mut CsvOutput::new(output), workers, trace_factory)
         .map(report_from_manager)
         .map_err(error_from_manager)
 }
