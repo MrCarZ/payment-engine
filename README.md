@@ -2,7 +2,7 @@
 
 A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
-## Current status: Phase 2
+## Current status: Phase 3
 
 The crate and component boundaries are established. The binary validates exactly
 one input-path argument. It does not open files or process payments yet. A valid
@@ -22,6 +22,15 @@ digits (including trailing zeros) are rejected. Display always emits four places
 and normalizes negative zero. Identifier parsing accepts surrounding whitespace
 and the complete underlying unsigned range, including zero.
 
+`Account` provides deposits, withdrawals, holds, releases, and chargebacks with
+private balance fields. All operations check arithmetic and the derived total
+before committing changes; failures leave balances and lock status unchanged.
+Withdrawals use only available funds. Holds may make available funds negative;
+releases and chargebacks require sufficient held funds. Chargebacks lock the
+account permanently, blocking new deposits and withdrawals while allowing
+lifecycle operations. Transaction ownership and dispute-state validation will
+be introduced in subsequent phases; account methods enforce balance rules only.
+
 ```sh
 cargo build
 cargo run -- transactions.csv
@@ -29,6 +38,11 @@ cargo test
 ```
 
 ## Boundaries
+
+Domain modules with unit tests use a directory named after the module, containing
+`mod.rs` for implementation and `tests.rs` for tests. Unit tests are included only
+under `cfg(test)`. Parameterized cases use `rstest` as a development dependency;
+CLI integration tests stay in the top-level `tests` directory.
 
 - `domain`: financial types and invariants; no CSV or tracing dependencies.
 - `application`: payment requests and coordination of domain operations.

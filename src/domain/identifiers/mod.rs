@@ -73,34 +73,4 @@ impl Display for TransactionId {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn client_ids_accept_full_u16_range_and_whitespace() {
-        for value in [0, u16::MAX] {
-            let id = ClientId::new(value);
-            assert_eq!(ClientId::from(value), id);
-            assert_eq!(id.get(), value);
-            assert_eq!(format!(" {value} ").parse::<ClientId>(), Ok(id));
-            assert_eq!(id.to_string(), value.to_string());
-        }
-        for invalid in ["65536", "-1", "", "1.0"] {
-            assert!(invalid.parse::<ClientId>().is_err());
-        }
-    }
-
-    #[test]
-    fn transaction_ids_accept_full_u32_range_and_whitespace() {
-        for value in [0, u32::MAX] {
-            let id = TransactionId::new(value);
-            assert_eq!(TransactionId::from(value), id);
-            assert_eq!(id.get(), value);
-            assert_eq!(format!(" {value} ").parse::<TransactionId>(), Ok(id));
-            assert_eq!(id.to_string(), value.to_string());
-        }
-        for invalid in ["4294967296", "-1", "", "1.0"] {
-            assert!(invalid.parse::<TransactionId>().is_err());
-        }
-    }
-}
+mod tests;
