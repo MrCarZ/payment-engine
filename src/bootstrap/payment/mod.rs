@@ -9,15 +9,16 @@ use std::{
 use crate::{
     adapters::payment::csv::{
         input::{Input, Record},
+        output::OutputError,
         output::write as write_accounts,
     },
     bootstrap::config::InputConfig,
+    domain::payment::{Account, ClientId},
     manager::{
         observability::TraceService,
         payment::{
             SourceContext,
-            run::{Coordinator, Summary},
-            trace::{State, run_finished},
+            run::{Output, Summary, run as run_records},
         },
     },
 };
@@ -69,56 +70,23 @@ pub fn run(
     source: SourceContext,
     trace: &mut dyn TraceService,
 ) -> Result<Summary, RunError> {
-    let mut coordinator = Coordinator::new();
-    let result = match Input::new(input, source.clone()) {
-        Ok(input) => coordinator.process(input, trace),
-        Err(error) => coordinator.process(once(Err::<Record, _>(error)), trace),
+    let mut output = CsvOutput(output);
+    match Input::new(input, source.clone()) {
+        Ok(input) => run_records(input, &source, &mut output, trace),
+        Err(error) => run_records(once(Err::<Record, _>(error)), &source, &mut output, trace),
     }
-    .map_err(Failure::from)
-    .and_then(|()| trace.flush().map_err(Failure::Trace))
-    .and_then(|()| {
-        write_accounts(output, coordinator.manager().accounts()).map_err(Failure::Output)
-    });
-    finish(&source, coordinator.summary(), result, trace)
+    .map_err(|error| RunError::from_execution(error, |error| error))
 }
 
-fn finish(
-    source: &SourceContext,
-    summary: Summary,
-    result: Result<(), Failure>,
-    trace: &mut dyn TraceService,
-) -> Result<Summary, RunError> {
-    let state = if result.is_ok() {
-        State::Completed
-    } else {
-        State::Failed
-    };
-    finish_as(source, summary, state, result, trace)
-}
+pub(super) struct CsvOutput<W>(pub W);
 
-fn finish_as(
-    source: &SourceContext,
-    summary: Summary,
-    state: State,
-    result: Result<(), Failure>,
-    trace: &mut dyn TraceService,
-) -> Result<Summary, RunError> {
-    let mut failure = result.err().map(|failure| RunError::new(failure, summary));
-    // Always attempt summary delivery and explicit flush, preserving every error.
-    for result in [
-        trace.emit(run_finished(source, summary, state)),
-        trace.flush(),
-    ] {
-        if let Err(error) = result {
-            match &mut failure {
-                Some(failure) => failure.additional_trace_errors.push(error),
-                None => failure = Some(RunError::new(Failure::Trace(error), summary)),
-            }
-        }
-    }
-    match failure {
-        Some(error) => Err(error),
-        None => Ok(summary),
+impl<W: Write> Output for CsvOutput<W> {
+    type Error = OutputError;
+    fn publish<'a>(
+        &mut self,
+        accounts: impl IntoIterator<Item = (ClientId, &'a Account)>,
+    ) -> Result<(), Self::Error> {
+        write_accounts(&mut self.0, accounts)
     }
 }
 

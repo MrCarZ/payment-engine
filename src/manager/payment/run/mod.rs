@@ -1,6 +1,6 @@
 //! Transport-independent sequential payment coordination and run accounting.
 
-use std::error::Error;
+use std::{convert::Infallible, error::Error};
 
 use crate::{domain::observability::Event, manager::observability::TraceService};
 
@@ -10,7 +10,12 @@ use super::{
 };
 
 mod error;
+mod execution;
+mod output;
 pub use error::Failure;
+pub(crate) use execution::finish_as;
+pub use execution::{Failure as RunFailure, RunError, run};
+pub use output::Output;
 
 /// Applied/ignored/rejected exclude replays. Replayed counts all original
 /// retries regardless of their stored outcome.
@@ -41,6 +46,12 @@ pub trait Record {
 
 pub trait InputFailure: Error {
     fn event(&self) -> Event;
+}
+
+impl InputFailure for Infallible {
+    fn event(&self) -> Event {
+        match *self {}
+    }
 }
 
 #[derive(Debug, Default)]

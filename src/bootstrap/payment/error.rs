@@ -15,7 +15,9 @@ use crate::{
         observability::TraceError,
         payment::{
             Context, ProcessingError,
-            run::{Failure as CoordinatorFailure, Summary},
+            run::{
+                Failure as CoordinatorFailure, RunError as ManagerRunError, RunFailure, Summary,
+            },
         },
     },
 };
@@ -132,6 +134,44 @@ pub struct RunError {
 }
 
 impl RunError {
+    pub(super) fn from_execution<E>(
+        error: ManagerRunError<Record, E, OutputError>,
+        input_error: impl FnOnce(E) -> InputError,
+    ) -> Self {
+        let failure = match *error.failure {
+            RunFailure::Coordinator(failure) => {
+                let failure = match failure {
+                    CoordinatorFailure::Input { error, trace_error } => CoordinatorFailure::Input {
+                        error: input_error(error),
+                        trace_error,
+                    },
+                    CoordinatorFailure::Processing {
+                        record,
+                        error,
+                        trace_error,
+                    } => CoordinatorFailure::Processing {
+                        record,
+                        error,
+                        trace_error,
+                    },
+                    CoordinatorFailure::Trace(error) => CoordinatorFailure::Trace(error),
+                };
+                Failure::from(failure)
+            }
+            RunFailure::Output(error) => Failure::Output(error),
+            RunFailure::Trace(error) => Failure::Trace(error),
+            RunFailure::Cancelled => Failure::Cancelled,
+            RunFailure::WorkerPanicked => Failure::WorkerPanicked,
+            RunFailure::WorkerSpawn(error) => Failure::WorkerSpawn(error),
+        };
+        Self {
+            failure: Box::new(failure),
+            summary: error.summary,
+            additional_trace_errors: error.additional_trace_errors,
+            trace_path: None,
+        }
+    }
+
     pub(super) fn new(failure: Failure, summary: Summary) -> Self {
         Self {
             failure: Box::new(failure),

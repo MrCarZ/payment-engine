@@ -191,8 +191,9 @@ Run `Summary` counts applied, ignored, rejected, replayed, input errors, and
 processing errors. Applied/ignored/rejected exclude replays; the replay count
 includes retries of any original outcome. Run state is Completed or Failed,
 with Info or Error severity respectively. Run accounting and ordered processing
-belong to `manager::payment::run::Coordinator`; publication, final flushing, and
-CLI wiring belong to the bootstrap.
+belong to `manager::payment::run::Coordinator`. Manager execution owns
+publication order and final trace delivery; bootstrap wires concrete CSV and
+filesystem resources.
 
 ## Synchronous execution
 
@@ -249,7 +250,7 @@ bootstrap/
 The root only declares modules. `config::Invocation` validates input paths and
 the optional output root while preserving native paths. `payment/setup.rs` constructs input, trace file, clock-backed run
 identity, and source context. `payment/mod.rs` connects CSV input to the manager
-coordinator, publishes account output, and finalizes traces. Execution errors
+lifecycle and supplies its CSV output implementation. Execution errors
 remain in `payment/error.rs` with source/position context and secondary failures.
 
 `manager::payment::run` owns its `Coordinator`, outcome `Summary`, and
@@ -298,7 +299,7 @@ continues to stream. Bounded-memory batch input is a future extension.
 
 ## Concurrent batch execution
 
-`bootstrap::payment::batch::execution` executes the validated snapshots in bounded
+`manager::payment::batch::run` executes the validated snapshots in bounded
 groups of scoped OS threads. Each source owns its payment manager and trace sink;
 workers share no financial state. Rows retain their source order, while ordering
 between sources is unspecified. Reports retain input order and aggregate account
@@ -357,3 +358,27 @@ cargo run -- --output-dir output tests/fixtures/input/payments-a.csv tests/fixtu
 Every invocation creates a new run subdirectory, including failed batch preflight
 runs once output storage is initialized. The output directory and trace paths are
 printed to stderr. No program logs or traces are written beside input CSVs.
+
+## Manager-owned execution lifecycle
+
+`manager::payment::run::run` accepts an iterator of validated record envelopes,
+source context, an injected account `Output`, and a trace service. It owns the
+processing/flush/publication order and final summary delivery. `Output::publish`
+receives borrowed account snapshots; its implementation chooses representation,
+sorting, destination, and delivery completion. Manager lifecycle errors retain
+typed input records, input errors, output errors, work counts, and secondary
+trace failures without knowing CSV positions or filesystem locations.
+
+`manager::payment::batch::run` executes a `ValidatedBatch<R>` of any sendable
+record envelopes with bounded scoped workers. Source reports, cancellation,
+panic handling, aggregate counts, publication policy, and final tracing belong
+to the manager. Output stays on the calling thread; workers own their source
+state and trace sinks. Batch publication errors must be sendable because the
+shared lifecycle failure type can cross worker boundaries.
+
+Bootstrap currently retains CSV parsing, preflight reader composition, file
+opening, UUID construction, trace sink setup, and artifact persistence. Its
+single and batch entry points delegate execution policy to managers. A local
+CSV output implementation satisfies the publication contract; compatibility
+error/report mappings retain existing CSV provenance and CLI behavior. Moving
+these concrete I/O responsibilities into adapters is a separate follow-up step.

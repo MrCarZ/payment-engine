@@ -12,7 +12,7 @@ use crate::{
     },
 };
 
-use super::{Context, Coordinator, Failure, InputFailure, Record, Request};
+use super::{Context, Coordinator, Failure, Record, Request};
 
 #[derive(Debug)]
 struct Envelope {
@@ -26,12 +26,6 @@ impl Record for Envelope {
     }
     fn context(&self) -> &Context {
         &self.context
-    }
-}
-
-impl InputFailure for Infallible {
-    fn event(&self) -> Event {
-        match *self {}
     }
 }
 

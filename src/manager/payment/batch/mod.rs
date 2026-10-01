@@ -7,7 +7,9 @@ use crate::domain::payment::{ClientId, TransactionId};
 use super::{Request, SourceContext, run::Record};
 
 mod error;
+mod execution;
 pub use error::{Location, ValidationError};
+pub use execution::{ExecutionError, Failure, Report, SourceReport, run};
 
 /// A complete, ordered source snapshot. Construction alone does not validate it.
 #[derive(Debug)]

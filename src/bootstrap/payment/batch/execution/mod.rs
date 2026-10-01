@@ -1,24 +1,19 @@
 //! Bounded concurrent source execution with isolated state and trace sinks.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     fs::File,
     io::Write,
     num::NonZeroUsize,
-    panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
-    thread::{Builder, scope},
 };
 
 use crate::{
-    adapters::payment::csv::{
-        input::{InputError, Record},
-        output::write as write_accounts,
-    },
+    adapters::payment::csv::{input::Record, output::OutputError},
     bootstrap::{
         config::BatchConfig,
         payment::{
-            Failure as SourceFailure, RunError, finish_as,
+            CsvOutput, Failure as SourceFailure, RunError,
             setup::{create_run_directory, create_trace, new_run_id, source_id},
         },
     },
@@ -26,8 +21,11 @@ use crate::{
         observability::{TraceError, TraceService},
         payment::{
             SourceContext,
-            batch::ValidatedBatch,
-            run::{Coordinator, Summary},
+            batch::{
+                ExecutionError as ManagerExecutionError, Failure as ManagerFailure,
+                Report as ManagerReport, ValidatedBatch, run as run_batch,
+            },
+            run::Summary,
             trace::State,
         },
     },
@@ -56,21 +54,6 @@ pub struct Report {
 pub struct Execution {
     pub report: Report,
     pub trace_paths: Vec<PathBuf>,
-}
-
-struct Job<T> {
-    index: usize,
-    source: SourceContext,
-    records: Vec<Record>,
-    trace: T,
-}
-
-struct Completed<T> {
-    index: usize,
-    source: SourceContext,
-    coordinator: Coordinator,
-    trace: Option<T>,
-    result: Result<(), SourceFailure>,
 }
 
 /// Validates all inputs before creating trace files or processing payments.
@@ -149,198 +132,47 @@ pub(crate) fn execute_at(
     })
 }
 
-/// Constructs one sink per source before starting bounded groups of workers.
-/// A failed group prevents later groups from starting. In-flight peers finish.
+/// CSV composition around the manager-owned batch lifecycle.
 pub fn run<T: TraceService + Send>(
     batch: ValidatedBatch<Record>,
     output: impl Write,
     workers: NonZeroUsize,
-    mut trace_factory: impl FnMut(&SourceContext) -> Result<T, TraceError>,
+    trace_factory: impl FnMut(&SourceContext) -> Result<T, TraceError>,
 ) -> Result<Report, ExecutionError> {
-    let mut pending: VecDeque<Job<T>> = VecDeque::new();
-    for (index, source) in batch.into_sources().into_iter().enumerate() {
-        let (source, records) = source.into_parts();
-        let trace = match trace_factory(&source) {
-            Ok(trace) => trace,
-            Err(error) => {
-                let mut report = Report::default();
-                let mut additional_trace_errors = Vec::new();
-                for mut job in pending {
-                    let failure = finish_as(
-                        &job.source,
-                        Summary::default(),
-                        State::Failed,
-                        Err(SourceFailure::Cancelled),
-                        &mut job.trace,
-                    )
-                    .unwrap_err();
-                    additional_trace_errors.extend(failure.additional_trace_errors);
-                    report.sources.push(SourceReport {
-                        source: job.source,
-                        summary: Summary::default(),
-                        state: State::Failed,
-                        error: Some(RunError::new(SourceFailure::Cancelled, Summary::default())),
-                    });
-                }
-                return Err(ExecutionError {
-                    failure: Box::new(Failure::TraceSetup { source, error }),
-                    report,
-                    additional_trace_errors,
-                });
-            }
-        };
-        pending.push_back(Job {
-            index,
-            source,
-            records,
-            trace,
-        });
-    }
-    let mut completed = Vec::new();
-    while !pending.is_empty() {
-        let mut group = scope(|scope| {
-            let mut handles = Vec::new();
-            let mut results = Vec::new();
-            for _ in 0..workers.get() {
-                let Some(job) = pending.pop_front() else {
-                    break;
-                };
-                let index = job.index;
-                let source = job.source.clone();
-                match Builder::new()
-                    .name(format!("payment-source-{index}"))
-                    .spawn_scoped(scope, move || process(job))
-                {
-                    Ok(handle) => handles.push((index, source, handle)),
-                    Err(error) => {
-                        results.push(Completed {
-                            index,
-                            source,
-                            coordinator: Coordinator::new(),
-                            trace: None,
-                            result: Err(SourceFailure::WorkerSpawn(error)),
-                        });
-                        break;
-                    }
-                }
-            }
-            for (index, source, handle) in handles {
-                results.push(match handle.join() {
-                    Ok(result) => result,
-                    Err(_) => Completed {
-                        index,
-                        source,
-                        coordinator: Coordinator::new(),
-                        trace: None,
-                        result: Err(SourceFailure::WorkerPanicked),
-                    },
-                });
-            }
-            results
-        });
-        let failed = group.iter().any(|source| source.result.is_err());
-        completed.append(&mut group);
-        if failed {
-            break;
-        }
-    }
-    for job in pending {
-        completed.push(Completed {
-            index: job.index,
-            source: job.source,
-            coordinator: Coordinator::new(),
-            trace: Some(job.trace),
-            result: Err(SourceFailure::Cancelled),
-        });
-    }
-    completed.sort_by_key(|source| source.index);
-    let processing_failed = completed.iter().any(|source| source.result.is_err());
-    let output_result = if processing_failed {
-        Ok(())
-    } else {
-        write_accounts(
-            output,
-            completed
-                .iter()
-                .flat_map(|source| source.coordinator.manager().accounts()),
-        )
-    };
-    let publication_failed = output_result.is_err();
-    let mut report = Report::default();
-    for mut source in completed {
-        let summary = source.coordinator.summary();
-        let mut state = if source.result.is_ok() && !publication_failed {
-            State::Completed
-        } else {
-            State::Failed
-        };
-        let result = match &mut source.trace {
-            Some(trace) => match catch_unwind(AssertUnwindSafe(|| {
-                finish_as(&source.source, summary, state, source.result, trace)
-            })) {
-                Ok(result) => result,
-                Err(_) => Err(RunError::new(SourceFailure::WorkerPanicked, summary)),
-            },
-            None => Err(RunError::new(source.result.unwrap_err(), summary)),
-        };
-        if result.is_err() {
-            state = State::Failed;
-        }
-        add_summary(&mut report.summary, summary);
-        report.sources.push(SourceReport {
-            source: source.source,
-            summary,
-            state,
-            error: result.err(),
-        });
-    }
-    let failure = match output_result {
-        Err(error) => Some(Failure::Output(error)),
-        Ok(()) if report.sources.iter().any(|source| source.error.is_some()) => {
-            Some(Failure::SourcesFailed)
-        }
-        Ok(()) => None,
-    };
-    match failure {
-        Some(failure) => Err(ExecutionError {
-            failure: Box::new(failure),
-            report,
-            additional_trace_errors: Vec::new(),
-        }),
-        None => Ok(report),
+    run_batch(batch, &mut CsvOutput(output), workers, trace_factory)
+        .map(report_from_manager)
+        .map_err(error_from_manager)
+}
+
+fn report_from_manager(report: ManagerReport<Record, OutputError>) -> Report {
+    Report {
+        summary: report.summary,
+        sources: report
+            .sources
+            .into_iter()
+            .map(|source| SourceReport {
+                source: source.source,
+                summary: source.summary,
+                state: source.state,
+                error: source
+                    .error
+                    .map(|error| RunError::from_execution(error, |never| match never {})),
+            })
+            .collect(),
     }
 }
 
-fn process<T: TraceService>(mut job: Job<T>) -> Completed<T> {
-    let mut coordinator = Coordinator::new();
-    let result = match catch_unwind(AssertUnwindSafe(|| {
-        coordinator
-            .process(
-                job.records.into_iter().map(Ok::<_, InputError>),
-                &mut job.trace,
-            )
-            .map_err(SourceFailure::from)
-            .and_then(|()| job.trace.flush().map_err(SourceFailure::Trace))
-    })) {
-        Ok(result) => result,
-        Err(_) => Err(SourceFailure::WorkerPanicked),
+fn error_from_manager(error: ManagerExecutionError<Record, OutputError>) -> ExecutionError {
+    let failure = match *error.failure {
+        ManagerFailure::TraceSetup { source, error } => Failure::TraceSetup { source, error },
+        ManagerFailure::SourcesFailed => Failure::SourcesFailed,
+        ManagerFailure::Output(error) => Failure::Output(error),
     };
-    Completed {
-        index: job.index,
-        source: job.source,
-        coordinator,
-        trace: Some(job.trace),
-        result,
+    ExecutionError {
+        failure: Box::new(failure),
+        report: report_from_manager(error.report),
+        additional_trace_errors: error.additional_trace_errors,
     }
-}
-
-fn add_summary(total: &mut Summary, source: Summary) {
-    total.applied += source.applied;
-    total.ignored += source.ignored;
-    total.rejected += source.rejected;
-    total.replayed += source.replayed;
-    total.input_errors += source.input_errors;
-    total.processing_errors += source.processing_errors;
 }
 
 #[cfg(test)]
