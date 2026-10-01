@@ -2,7 +2,7 @@
 
 A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
-## Current status: Phase 5
+## Current status: Phase 6
 
 The crate and component boundaries are established. The binary validates exactly
 one input-path argument. It does not open files or process payments yet. A valid
@@ -44,10 +44,18 @@ them directly or alias them when other domain types would conflict.
 owns accounts and original records, including rejected originals. It calculates
 candidate account and transaction states before committing either. Valid ignored
 or rejected requests referencing an unseen client create a zero-balance account.
-Arithmetic failures leave account and original records unchanged. Duplicate
-original IDs are currently rejected to prevent double application; identical
-replay handling is reserved for Phase 6. Lifecycle references use the stored
+Arithmetic failures leave account and original records unchanged. Identical
+original replays return their stored outcome without applying financial changes.
+Conflicting original-ID reuse is rejected. Lifecycle references use the stored
 amount and never replace the original processing outcome.
+
+`process` returns a `Report` exposing `outcome()` and `is_replay()`. A replayed
+applied outcome means the original succeeded previously; it does not indicate a
+new balance movement. Equality compares normalized client, ID, type, and money
+values. Replays preserve current transaction state even after chargeback, and a
+rejected withdrawal stays rejected after later deposits. Valid business outcomes
+reserve original IDs; fatal arithmetic failures do not. Replay detection applies
+only to originals, while repeated lifecycle events follow their state rules.
 
 ```sh
 cargo build

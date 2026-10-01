@@ -18,6 +18,24 @@ pub enum Outcome {
     Rejected(Reason),
 }
 
+/// The business outcome and whether it was returned from an original replay.
+/// A replayed Applied outcome does not mean funds were moved again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Report {
+    outcome: Outcome,
+    replayed: bool,
+}
+
+impl Report {
+    pub const fn outcome(&self) -> Outcome {
+        self.outcome
+    }
+
+    pub const fn is_replay(&self) -> bool {
+        self.replayed
+    }
+}
+
 /// Stable classifications for future trace and partner reporting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
@@ -30,7 +48,7 @@ pub enum Reason {
     AlreadyChargedBack,
     AccountLocked,
     InsufficientAvailableFunds,
-    DuplicateTransactionId,
+    ConflictingTransactionId,
 }
 
 /// Retains the original request and outcome even when the request was rejected.
@@ -81,8 +99,17 @@ impl PaymentManager {
             .map(|(client, account)| (*client, account))
     }
 
-    pub fn process(&mut self, request: Request) -> Result<Outcome, ProcessingError> {
-        match request {
+    pub fn process(&mut self, request: Request) -> Result<Report, ProcessingError> {
+        if let Request::Original { tx, .. } = request
+            && let Some(original) = self.originals.get(&tx)
+            && original.request == request
+        {
+            return Ok(Report {
+                outcome: original.outcome,
+                replayed: true,
+            });
+        }
+        let outcome = match request {
             Request::Original {
                 client,
                 tx,
@@ -90,7 +117,11 @@ impl PaymentManager {
                 amount,
             } => self.process_original(request, client, tx, transaction_type, amount),
             Request::Lifecycle { client, tx, action } => self.process_lifecycle(client, tx, action),
-        }
+        }?;
+        Ok(Report {
+            outcome,
+            replayed: false,
+        })
     }
 
     fn process_original(
@@ -103,7 +134,7 @@ impl PaymentManager {
     ) -> Result<Outcome, ProcessingError> {
         if self.originals.contains_key(&tx) {
             self.accounts.entry(client).or_default();
-            return Ok(Outcome::Rejected(Reason::DuplicateTransactionId));
+            return Ok(Outcome::Rejected(Reason::ConflictingTransactionId));
         }
         let mut account = self.accounts.get(&client).cloned().unwrap_or_default();
         let result = match transaction_type {
