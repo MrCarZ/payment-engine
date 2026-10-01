@@ -80,9 +80,13 @@ and diagnostics are printed to stderr.
 
 ### Batch CSVs
 
-**Author Personal Note:** Although not directly specified, the idea here was to provide
-a small solution for one of the cases suggested in the problem description (``What if your code was bundled in a server, and these CSVs came from thousands of concurrent TCP streams?``). The batch solution is an approach for showing concurrent data processing 
-even with some supported assumptions such as the disjoint clients between multiple CSVs.
+> [!NOTE]
+> **Author’s personal note**
+>
+>  Although not directly specified, the idea here was to provide
+> a small solution for one of the cases suggested in the problem description (``What if your code was bundled in a server, and these CSVs came from thousands of concurrent TCP streams?``).
+> The batch solution is an approach for showing concurrent data processing 
+> even with some supported assumptions such as the disjoint clients between multiple CSVs.
 
 ```sh
 cargo run -- tests/fixtures/input/payments-a.csv tests/fixtures/input/payments-b.csv
@@ -140,11 +144,15 @@ exit status. See [fixture instructions](tests/fixtures/README.md) for more examp
 
 ## 3. Layout of the project
 
-**Author Personal Note:** Although a simple script file would attend most of the specifications 
-of the project, my idea here was to show some designs and ways of working that
-I'm used to when implementing services for large codebases, you can then assume that
-the overall project structure is one piece of implementation that could be part of a bigger
-project repo with many domains and different features.
+> [!NOTE]
+> **Author’s personal note**
+>
+>  A simple script file would probably attend most of the specifications 
+> of the project. However, my idea here was to show some designs and ways of working that
+> I'm used to when implementing services for large codebases, you can then imagine that
+> the overall project structure is one piece of implementation that could be part of a bigger
+> project repo with many domains and different features.
+
 
 ```text
 src/
@@ -392,8 +400,10 @@ fractional digits are accepted, scientific notation and excess precision are
 rejected. IDs accept their complete unsigned ranges, including zero, because the
 input contract does not reserve zero. 
 
-**Author Personal Note:** This a
-common technique used within several systems (in my current company we do like that as well)
+> [!NOTE]
+> **Author’s personal note**
+>
+>  This a common technique used within several systems (in my current company we do like that as well!)
 
 ### Withdrawals use available funds
 
@@ -408,8 +418,13 @@ require a different financial rule. References to rejected originals are ignored
 because those originals never changed balances. Since we do not have clearer rules
 on how to proceed with dispute in withdrawals.
 
-**Author Personal Note:** I setted this up as a assumption since I'm not familiar 
-with how would be a typical way of handling these scenarios. 
+> [!NOTE]
+> **Author’s personal note**
+>
+> I setted this up as a assumption since I'm not familiar with how would be a
+> typical way of handling these scenarios. In a regular work scenario, I'd ask
+> for clarification of the requirements for the Product team and the stakeholders
+
 
 ### Disputes hold the complete original amount
 
@@ -454,9 +469,12 @@ Their applicability is determined by the transaction state, so they cannot be fu
 distinguished from new identical events. Replay tracking lasts only for the current
 in-memory run, restarting the process does not recover earlier state.
 
-**Author Personal Note:** For a production-ready system that could be connected to an external partner API, we'd probably
-receive some identifier regarding each row so we could create an idempotency strategy for recognizing
-duplicated rows better.
+> [!NOTE]
+> **Author’s personal note**
+>
+> For a production-ready system that could be connected to an external partner API, we'd probably
+> receive some identifier regarding each row so we could create an idempotency strategy for recognizing
+> duplicated rows better.
 
 ### Input order is authoritative
 
@@ -464,7 +482,12 @@ Rows are processed in file order. An unknown reference is ignored immediately,
 even if its original appears later, it is not queued for replay. This avoids
 reordering partner events or assuming a future row will repair an earlier one.
 
-**Author Personal Note:** In a production-ready system, this probably would need adapted to guarantee the processed order such as adding a sequence number on the transaction (a dispute can be received first than its correspondent deposit, for example) so for late arriving transactions we can reconstitute the order of it and process properly.
+> [!NOTE]
+> **Author’s personal note**
+>
+> In a production-ready system, this probably would need adapted to guarantee the processed order such as
+> adding a sequence number on the transaction (a dispute can be received first than its correspondent deposit,
+> for example) so for late arriving transactions we can reconstitute the order of it and process properly.
 
 ### Batch files own disjoint partitions
 
@@ -474,10 +497,13 @@ This restriction allows concurrent processing without shared account state or
 ambiguous ordering. Unknown references absent from the entire batch remain valid
 input and follow the normal ignore rule.
 
-**Author Personal Note:** In a real production system this I'd be probably discussed it further, 
-one approach I can think of by now is to partition the processing job into several consumers
-by client_id or something like that, so we could guarantee that data doesn't mix and we can
-preserve joint partitions
+> [!NOTE]
+> **Author’s personal note**
+>
+> In a real production system this I'd be probably discussed it further, 
+> one approach I can think of by now is to partition the processing job into several consumers
+> by client_id or something like that, so we could guarantee that data doesn't mix and we can
+> preserve joint partitions
 
 ### Invalid input stops processing
 
@@ -527,11 +553,14 @@ worker failures, and artifact reporting.
 
 ### Intended observability integration
 
-**Author Personal Note:** The idea here was to simulate a codebase already existing
-and which I'd use its trace/observability module implementation to do some metrifications 
-on the payment feature I'd be shipping. That's why I created it apart from the payments concepts
-so it would be more realistic in a larger codebase to have a centralized trace/observability helper
-methods than specific ones in each domain.
+> [!NOTE]
+> **Author’s personal note**
+>
+> The idea here was to simulate a codebase already existing
+> and which I'd use its trace/observability module implementation to do some metrifications 
+> on the payment feature I'd be shipping. That's why I created it apart from the payments concepts
+> so it would be more realistic in a larger codebase to have a centralized trace/observability helper
+> methods than specific ones in each domain.
 
 `domain/observability` models a shared telemetry contract: structured `Event`
 values, severity, correlation, attributes, and timestamped records. It remains
@@ -573,10 +602,12 @@ strategy, rather than functionality already implemented.
 
 #### Metrics strategy
 
-**Author Personal Note:** This is not implemented in the codebase, it is just a way
-on how I'd think observability regarding this feature, at least in my current company
-it is part of the design to pre-define the performance and correctness metrics of a given
-system.
+> [!NOTE]
+> **Author’s personal note**
+>
+> This is not implemented in the codebase, it is just a way
+> on how I'd think observability regarding this feature, at least in my current company
+> it is part of the design to pre-define the performance and correctness metrics of a given system.
 
 The service would publish the following aggregates:
 
