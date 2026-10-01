@@ -1,5 +1,15 @@
 # Payments Engine
 
+## Table of contents
+
+1. [Overview](#1-overview)
+2. [Usage](#2-usage)
+3. [Layout of the project](#3-layout-of-the-project)
+4. [Assumptions](#4-assumptions)
+5. [Tests and Robustness](#5-tests-and-robustness)
+6. [Sample generator script usage](#6-sample-generator-script-usage)
+7. [Used libraries](#7-used-libraries)
+
 ## 1. Overview
 
 A Rust library and command-line application for processing user payments from CSV
@@ -70,6 +80,10 @@ and diagnostics are printed to stderr.
 
 ### Batch CSVs
 
+**Author Personal Note:** Although not directly specified, the idea here was to provide
+a small solution for one of the cases suggested in the problem description (``What if your code was bundled in a server, and these CSVs came from thousands of concurrent TCP streams?``). The batch solution is an approach for showing concurrent data processing 
+even with some supported assumptions such as the disjoint clients between multiple CSVs.
+
 ```sh
 cargo run -- tests/fixtures/input/payments-a.csv tests/fixtures/input/payments-b.csv
 ```
@@ -125,6 +139,12 @@ parsing, fatal processing, trace, output, and artifact failures produce a nonzer
 exit status. See [fixture instructions](tests/fixtures/README.md) for more examples.
 
 ## 3. Layout of the project
+
+**Author Personal Note:** Although a simple script file would attend most of the specifications 
+of the project, my idea here was to show some designs and ways of working that
+I'm used to when implementing services for large codebases, you can then assume that
+the overall project structure is one piece of implementation that could be part of a bigger
+project repo with many domains and different features.
 
 ```text
 src/
@@ -370,7 +390,9 @@ Money uses checked integer arithmetic to avoid floating-point rounding. Deposits
 and withdrawals require amounts greater than zero. Integers and up to four
 fractional digits are accepted, scientific notation and excess precision are
 rejected. IDs accept their complete unsigned ranges, including zero, because the
-input contract does not reserve zero. This a
+input contract does not reserve zero. 
+
+**Author Personal Note:** This a
 common technique used within several systems (in my current company we do like that as well)
 
 ### Withdrawals use available funds
@@ -385,6 +407,9 @@ as non-disputable because applying the same hold model to outgoing funds would
 require a different financial rule. References to rejected originals are ignored
 because those originals never changed balances. Since we do not have clearer rules
 on how to proceed with dispute in withdrawals.
+
+**Author Personal Note:** I setted this up as a assumption since I'm not familiar 
+with how would be a typical way of handling these scenarios. 
 
 ### Disputes hold the complete original amount
 
@@ -429,7 +454,7 @@ Their applicability is determined by the transaction state, so they cannot be fu
 distinguished from new identical events. Replay tracking lasts only for the current
 in-memory run, restarting the process does not recover earlier state.
 
-For a production-ready system that could be connected to an external partner API, we'd probably
+**Author Personal Note:** For a production-ready system that could be connected to an external partner API, we'd probably
 receive some identifier regarding each row so we could create an idempotency strategy for recognizing
 duplicated rows better.
 
@@ -439,7 +464,7 @@ Rows are processed in file order. An unknown reference is ignored immediately,
 even if its original appears later, it is not queued for replay. This avoids
 reordering partner events or assuming a future row will repair an earlier one.
 
-In a production-ready system, this probably would need adapted to guarantee the processed order such as adding a sequence number on the transaction (a dispute can be received first than its correspondent deposit, for example) so for late arriving transactions we can reconstitute the order of it and process properly.
+**Author Personal Note:** In a production-ready system, this probably would need adapted to guarantee the processed order such as adding a sequence number on the transaction (a dispute can be received first than its correspondent deposit, for example) so for late arriving transactions we can reconstitute the order of it and process properly.
 
 ### Batch files own disjoint partitions
 
@@ -449,8 +474,8 @@ This restriction allows concurrent processing without shared account state or
 ambiguous ordering. Unknown references absent from the entire batch remain valid
 input and follow the normal ignore rule.
 
-In a real production system this would be probably be discussed further, one approach
-I can think of by now is to partition the processing job into several consumers
+**Author Personal Note:** In a real production system this I'd be probably discussed it further, 
+one approach I can think of by now is to partition the processing job into several consumers
 by client_id or something like that, so we could guarantee that data doesn't mix and we can
 preserve joint partitions
 
@@ -500,80 +525,13 @@ transaction transitions, ownership, replay/conflict handling, CSV conversion and
 output, trace delivery, single/batch execution, preflight isolation, cancellation,
 worker failures, and artifact reporting.
 
-LF/CRLF provenance tests cover physical lines, original byte offsets, multiline
-quoted fields, invalid input, and split reads. Batch cleanup tests inject failed
-worker starts and panicking trace finalization. Artifact tests check preservation
-of primary errors and report publication failures. Integration tests exercise the
-actual CLI and generated artifacts.
-
-### QA regression coverage
-
-- **Documented successful runs:** executable tests use `payments-a.csv` and
-  `payments-b.csv`, comparing stdout and persisted accounts with the checked-in
-  single/batch snapshots. Single counts are 10 applied, 1 replayed, 2 rejected,
-  and 1 ignored; batch counts are 14 applied, 2 replayed, 3 rejected, and 2 ignored.
-  Both have zero input and processing errors. Assertions cover every summary
-  counter, trace outcome classifications, source counts, final status, UUIDs,
-  source identities, filenames, locked accounts, and negative available balances
-  with held funds. CSV byte comparisons normalize line endings only.
-- **Invocation and input failures:** the default one-argument invocation checks
-  account output and `output/<run-id>/` artifacts. Invalid payload tests check
-  failed reports, empty stdout, retained partial accounts, and no completed
-  account file. A valid deposit followed by invalid input retains its applied
-  count and stops before processing subsequent records. Library-reported CSV
-  errors and underlying reader failures retain provenance and terminate input;
-  strict malformed-quote rejection is outside the valid-CSV assumption.
-- **Batch failures:** preflight tests verify zero processing, no source traces,
-  and retained partial artifacts. Worker-failure tests verify source states and
-  that aggregate counters equal source-counter sums. CLI assertions allow peers
-  to complete or be cancelled according to available parallelism; manager tests
-  use explicit worker limits to assert exact cancellation counts. Both existing
-  concurrency tests and orchestration fault tests remain covered.
-- **Financial sequences:** manager tests verify that held funds cannot finance
-  a withdrawal, a rejected original has no accepted transaction, and replay after
-  resolution preserves the rejection despite newly available funds. A fresh
-  withdrawal ID succeeds. Another sequence verifies recovery from negative
-  available funds through a later deposit, preserving held funds until resolution
-  and ending with available 10, held 0, total 10, and an unlocked account.
-  Rejected and replayed steps preserve account and original-record state.
-- **Artifact failures:** isolated filesystem and injected-writer tests cover an
-  output root that is a regular file, an existing run directory with sentinel
-  files, short writes, stdout failure after a prefix, and account publication
-  colliding with an existing directory. They verify error propagation, file
-  preservation, partial accounts, failed reports, and accurate report filenames.
-  CLI subprocesses run inside their temporary fixture directories.
-
-Two redundant module tests were removed while retaining parameterized UTF-8
-provenance/termination coverage and the lifecycle transition matrix and resolution
-round trip. Precision tests use literal scaled-unit expectations for an integer,
-a four-place fraction, and the smallest positive unit rather than comparing two
-parser results. Tests protecting distinct domain, manager, adapter, and executable
-boundaries remain separate; the suite has no numeric test-count target.
-
-Account and transaction candidates are validated before committing either.
-Checked arithmetic detects overflow, and failures preserve earlier financial
-state. Account output starts after successful processing and request-trace flush;
-processing failures suppress account publication. Output or final trace failures
-can still occur after bytes have reached stdout.
-
-A failed batch worker's active peers finish, while later groups are cancelled.
-Every initialized sink receives a finalization attempt. Summary emission and
-flushing are attempted independently, even if either panics. Primary failures and
-additional trace errors are retained; delivery failures never retry payments.
-
-Observability emits applied, ignored, rejected, replayed, input-error,
-processing-error, and run-summary events with stable classifications. CSV traces
-include record, line, and byte provenance. Payment events omit amounts, balances,
-raw rows, and underlying infrastructure error messages. UUID source identities
-are deterministic identifiers, not encryption.
-
-Diagnostics are attempted before the final report so their failures are reflected
-in the report's overall status and exit code. JSON is written and flushed to a
-partial file before publication. Account filenames reflect earlier publication
-even when a later artifact failure makes the run fail. Storage failure may prevent
-a final report from being created.
-
 ### Intended observability integration
+
+**Author Personal Note:** The idea here was to simulate a codebase already existing
+and which I'd use its trace/observability module implementation to do some metrifications 
+on the payment feature I'd be shipping. That's why I created it apart from the payments concepts
+so it would be more realistic in a larger codebase to have a centralized trace/observability helper
+methods than specific ones in each domain.
 
 `domain/observability` models a shared telemetry contract: structured `Event`
 values, severity, correlation, attributes, and timestamped records. It remains
@@ -615,6 +573,11 @@ strategy, rather than functionality already implemented.
 
 #### Metrics strategy
 
+**Author Personal Note:** This is not implemented in the codebase, it is just a way
+on how I'd think observability regarding this feature, at least in my current company
+it is part of the design to pre-define the performance and correctness metrics of a given
+system.
+
 The service would publish the following aggregates:
 
 - **`payment.requests` — count:** one observation per processed valid request,
@@ -650,29 +613,6 @@ remain log attributes rather than metric tags. Partner tags would be enabled
 only for a controlled partner set; the current CLI supplies no partner ID.
 This keeps metric cardinality bounded rather than creating separate series for
 individual payment identities.
-
-#### Investigation and partner feedback
-
-Dashboards would separate business issues from system failures. Business views
-would track reasons such as `unknown_transaction`, `client_mismatch`,
-`conflicting_transaction_id`, and `insufficient_available_funds`, with their
-counts and share of traffic over time. System views would track failed runs,
-processing errors, delivery failures, and latency.
-
-Partner discussions would use aggregate reason trends plus correlated examples
-from logs: missing references can indicate ordering problems, client mismatches
-can indicate ownership mapping errors, and conflicting IDs can indicate retry
-identity problems. These are investigation hypotheses, not automatic conclusions.
-Changes could then be evaluated against the same rates after a partner adjusts
-its input. Operational alerts would focus on fatal failures and sustained
-degradation; expected business rejections would use agreed volume/rate thresholds.
-
-For future APM tracing, one root span per run and child spans per source or stage
-would show parsing, preflight, processing, publication, and delivery durations.
-The adapter would attach actual tracing-provider identifiers to logs for
-log/trace correlation.
-The existing UUID `correlation_id` remains an application run identity; it is not
-an APM trace ID. Per-payment spans would require a separate volume policy.
 
 ### Current limits
 
