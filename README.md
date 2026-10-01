@@ -2,7 +2,7 @@
 
 A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
-## Current status: Phase 8
+## Current status: Phase 9
 
 The crate and component boundaries are established. The binary validates exactly
 one input-path argument. It does not open files or process payments yet. A valid
@@ -99,7 +99,11 @@ CLI integration tests stay in the top-level `tests` directory.
 - `domain/payment`: payment types and invariants; no CSV or tracing dependencies.
 - `manager`: payment requests and coordination of domain operations.
 - `adapters/payment`: service-scoped external representations and I/O.
-- `observability`: generic structured trace delivery.
+- `domain/observability`: generic event types.
+- `manager/observability`: trace delivery contract.
+- `adapters/observability`: CSV delivery and in-memory recording.
+- `domain/clock`: shared timestamp contract.
+- `adapters/clock`: system clock implementation.
 - `runtime`: execution configuration, wiring, and lifecycle.
 - Binary: process arguments, diagnostics, and exit status.
 
@@ -127,3 +131,31 @@ The borrowed `row::Row` representation converts into manager `Request` through
 input adapter owns headers, record lengths, source positions, and read failures,
 then delegates field validation to this conversion. Future API and webhook
 representations can independently target the same manager request boundary.
+
+## Shared tracing
+
+`manager::observability::TraceService` exposes object-safe `emit(Event)` and `flush()`
+operations. Event types live in `domain::observability` and contain severity, component, stable event name, optional
+correlation ID, message, and a JSON attribute map. Sinks timestamp events through
+an injectable `domain::clock::Clock` and normalize timestamps to UTC. `SystemClock` is the
+default; tests supply a fixed clock.
+
+`adapters::observability::csv::CsvTraceService` accepts any `Write` destination and emits
+`timestamp,severity,component,event_name,correlation_id,message,attributes`.
+Timestamps use RFC 3339, severity uses lowercase labels, absent correlation IDs
+are empty, and attributes are JSON objects escaped by the CSV writer. Small events
+are buffered; successful `emit` does not guarantee delivery. Explicit `flush`
+surfaces write/flush failures. Timestamp, JSON, and CSV failures are represented by adapter-local
+`CsvTraceError`, wrapped by transport-independent `TraceError` with the original
+error preserved through its source chain. The sink does not select files or write to stdout itself.
+
+`adapters::observability::memory::InMemoryTraceService` records timestamped structured events
+in order for consumer tests. The shared service contains no payment rules or
+partner-specific event mappings. Those mappings are reserved for Phase 10;
+runtime construction and mandatory failure handling belong to Phase 11.
+
+Observability follows the same domain/manager/adapter structure as payment.
+The trace contract has no CSV dependencies, and event types depend on neither
+managers nor adapters. The shared clock contract belongs to `domain/clock`,
+available to any service in the codebase. The default system clock belongs to
+`adapters/clock`; concrete trace delivery implementations also belong to adapters.

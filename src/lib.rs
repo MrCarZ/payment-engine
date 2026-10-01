@@ -7,5 +7,4 @@
 pub mod adapters;
 pub mod domain;
 pub mod manager;
-pub mod observability;
 pub mod runtime;
