@@ -5,6 +5,7 @@ use crate::domain::payment::{
     TransitionError, transaction::Type,
 };
 
+pub mod batch;
 mod context;
 mod error;
 mod request;

@@ -22,6 +22,7 @@ use crate::{
     },
 };
 
+pub mod batch;
 mod error;
 mod setup;
 

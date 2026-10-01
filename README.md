@@ -2,7 +2,7 @@
 
 A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
-## Current status: Phase 11
+## Current status: Phase 12
 
 The binary accepts exactly one input path, streams its CSV rows through the
 payment manager, and writes sorted account balances to stdout. Structured traces
@@ -228,7 +228,8 @@ Success exits with status zero; argument, setup, processing, output, and trace
 failures exit with a nonzero status. The CLI supplies the input path as source
 identity and leaves partner identity absent. Library callers can supply their
 own run/source/partner context and destinations through `run`. Batch contract
-validation and concurrent processing remain for Phases 12 and 13.
+validation is available through the library; concurrent execution remains for
+Phase 13. The CLI still accepts exactly one CSV path.
 
 Bootstrap files are organized by responsibility:
 
@@ -259,3 +260,41 @@ adapter implements these contracts without exposing its trace module. The
 coordinator knows no CSV types, readers, writers, or file paths. Non-CSV callers
 can use the default payment event mapping. Financial state stays in
 `PaymentManager`; bootstrap retains resource lifecycle ownership.
+
+## Batch preflight contract
+
+`manager::payment::batch::ValidatedBatch` validates a vector of ordered `Source`
+snapshots through `TryFrom`. It performs no payment processing. A batch must
+contain at least one source; header-only sources are valid. Source identities
+must be distinct, all sources must belong to the same run, and each record's
+complete context must match its declared source context.
+
+Every client mentioned by any request belongs to exactly one source, including
+clients on lifecycle requests that might later be ignored or rejected. Original
+transaction IDs may occur repeatedly within their owning source, preserving
+normal replay/conflict behavior, but cannot occur in another source. This rule
+also covers originals that processing may subsequently reject.
+
+Lifecycle references to an original in another source are rejected even when
+their client IDs are disjoint. Validation checks references after collecting
+all originals, so the result does not depend on whether the original's source
+appears before or after the reference. References absent from the whole batch
+remain valid input and retain normal unknown-transaction behavior. Validation
+does not reorder rows or turn same-source forward references into later actions.
+
+Typed contract errors identify the client/transaction and both source locations
+where applicable. Locations use one-based request ordinals, not physical line
+numbers. The validated batch exposes borrowed sources and records; consuming it
+transfers the snapshots to execution. Successful validation guarantees partition
+isolation, not business acceptance or freedom from arithmetic/delivery failures.
+
+`bootstrap::payment::batch::validate` fully parses supplied CSV readers and source
+contexts before applying the manager contract. CSV errors preserve source, line,
+record, and byte provenance. It creates no accounts, output files, traces, or
+threads. Parsed requests and positions are retained together so future workers
+can process the exact validated snapshot without reopening mutable files.
+This preflight API buffers all batch records in memory; the existing single-CSV
+CLI continues to stream. Bounded-memory batch input is a future extension.
+
+Phase 12 introduces the contract and CSV preflight only. Worker scheduling,
+parallel processing, aggregate output, and batch CLI wiring belong to Phase 13.
