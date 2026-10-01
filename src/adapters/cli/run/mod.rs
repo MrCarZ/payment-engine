@@ -1,4 +1,4 @@
-//! Per-invocation output storage, independent of payment business rules.
+//! CLI invocation composition: source adapters, account output, and run artifacts.
 
 use crate::{
     adapters::{
@@ -11,7 +11,7 @@ use crate::{
         payment::csv::processing::{
             batch::{BatchError, execute_at as execute_batch},
             execute_at,
-            setup::{create_run_directory, new_run_id},
+            setup::create_run_directory,
         },
     },
     manager::payment::run::Summary,
@@ -29,9 +29,12 @@ pub struct Execution {
 
 /// Keeps stdout account output while saving a copy and reports under a fresh
 /// run directory. Failed runs retain partial output without publishing accounts.csv.
-pub fn execute(invocation: Invocation, output: impl Write) -> Result<Execution, ArtifactError> {
+pub(crate) fn run(
+    invocation: Invocation,
+    output: impl Write,
+    run_id: String,
+) -> Result<Execution, ArtifactError> {
     let started = Instant::now();
-    let run_id = new_run_id();
     let directory =
         create_run_directory(&invocation.output_root, &run_id).map_err(ArtifactError::from)?;
     let partial = directory.join("accounts.partial.csv");

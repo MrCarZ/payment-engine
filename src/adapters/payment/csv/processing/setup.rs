@@ -77,11 +77,6 @@ pub(crate) fn source_id(canonical: &Path) -> String {
     .to_string()
 }
 
-/// A fresh execution identity, shared by its output directory and source traces.
-pub(crate) fn new_run_id() -> String {
-    Uuid::new_v4().to_string()
-}
-
 pub(super) fn create_trace(
     directory: &Path,
     source_index: usize,

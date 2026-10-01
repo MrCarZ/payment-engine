@@ -14,10 +14,11 @@ use crate::{
         output::{Output as CsvOutput, OutputError},
     },
     adapters::{
+        artifacts::identity::new_run_id,
         cli::config::BatchConfig,
         payment::csv::processing::{
             Failure as SourceFailure, RunError,
-            setup::{create_run_directory, create_trace, new_run_id, source_id},
+            setup::{create_run_directory, create_trace, source_id},
         },
     },
     manager::{

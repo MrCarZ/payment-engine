@@ -7,6 +7,7 @@ use std::{
 mod error;
 pub use error::Error;
 pub mod filesystem;
+pub mod identity;
 pub mod report;
 use filesystem::create_file;
 use report::Report;

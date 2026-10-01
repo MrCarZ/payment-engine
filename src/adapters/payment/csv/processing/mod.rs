@@ -7,11 +7,11 @@ use std::{
 };
 
 use crate::{
-    adapters::cli::config::InputConfig,
     adapters::payment::csv::{
         input::{Input, Record},
         output::Output as CsvOutput,
     },
+    adapters::{artifacts::identity::new_run_id, cli::config::InputConfig},
     manager::{
         observability::TraceService,
         payment::{
@@ -26,7 +26,7 @@ mod error;
 pub(crate) mod setup;
 
 pub use error::{Failure, RunError};
-use setup::{create_run_directory, new_run_id, prepare};
+use setup::{create_run_directory, prepare};
 
 #[derive(Debug)]
 pub struct Execution {

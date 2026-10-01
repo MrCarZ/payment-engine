@@ -197,7 +197,7 @@ filesystem resources.
 
 ## Synchronous execution
 
-`bootstrap::payment::run` accepts injected input/output streams, source context, and an
+`adapters::payment::csv::processing::run` accepts injected input/output streams, source context, and an
 object-safe trace service. It processes records in input order, counts outcomes
 with replays separately, and continues on business rejections or ignored events.
 Input errors, fatal processing failures, and trace delivery failures stop the run.
@@ -213,7 +213,9 @@ failure may occur after complete account output, and still yields a failure exit
 status. A Completed summary describes processing/output completion, not a
 guarantee that the final trace flush succeeded. Flush is not durable storage.
 
-The CLI's `bootstrap::artifacts::execute` creates an exclusive run directory,
+The CLI enters through `bootstrap::execute`, which creates a fresh run identity
+and delegates invocation handling to `adapters/cli/run`. The adapters create an
+exclusive run directory,
 opens the input sources, and creates one indexed trace CSV per source there.
 Each invocation gets a fresh random UUID v4 run ID, shared by its source
 contexts, trace correlation IDs, JSON report, and output directory. Existing inputs and run artifacts are preserved. Setup failures stop
@@ -231,27 +233,21 @@ using the URL namespace and native path bytes and leaves partner identity absent
 own run/source/partner context and destinations through `run`. Multiple input
 paths select validated concurrent batch execution.
 
-Bootstrap files are organized by responsibility:
+Bootstrap is a single composition module:
 
 ```text
 bootstrap/
-├── mod.rs
-├── config/
-│   ├── mod.rs
-│   ├── error.rs
-│   └── tests.rs
-└── payment/
-    ├── mod.rs
-    ├── setup.rs
-    ├── error.rs
-    └── tests.rs
+    mod.rs
 ```
 
-The root only declares modules. `config::Invocation` validates input paths and
-the optional output root while preserving native paths. `payment/setup.rs` constructs input, trace file, clock-backed run
-identity, and source context. `payment/mod.rs` connects CSV input to the manager
-lifecycle and supplies its CSV output implementation. Execution errors
-remain in `payment/error.rs` with source/position context and secondary failures.
+`bootstrap::execute` provides a fresh UUID v4 identity and connects the CLI
+invocation and output destination to its adapters. Argument parsing lives in
+`adapters/cli/config`; invocation handling lives in `adapters/cli/run`. CSV
+resources and source identities live in `adapters/payment/csv/processing`, and
+filesystem/report delivery lives in `adapters/artifacts`. The former bootstrap
+`config`, `payment`, and `artifacts` module paths have been removed. CSV library
+callers import the processing adapter directly; transport-independent callers
+use the manager contracts.
 
 `manager::payment::run` owns its `Coordinator`, outcome `Summary`, and
 transport-independent failures. Its `Record` and `InputFailure` contracts let
@@ -259,7 +255,7 @@ adapters supply validated requests and enrich events with provenance. The CSV
 adapter implements these contracts without exposing its trace module. The
 coordinator knows no CSV types, readers, writers, or file paths. Non-CSV callers
 can use the default payment event mapping. Financial state stays in
-`PaymentManager`; bootstrap retains resource lifecycle ownership.
+`PaymentManager`; adapters own resource setup and delivery.
 
 ## Batch preflight contract
 
@@ -288,7 +284,7 @@ numbers. The validated batch exposes borrowed sources and records; consuming it
 transfers the snapshots to execution. Successful validation guarantees partition
 isolation, not business acceptance or freedom from arithmetic/delivery failures.
 
-`bootstrap::payment::batch::validate` fully parses supplied CSV readers and source
+`adapters::payment::csv::processing::batch::validate` fully parses supplied CSV readers and source
 contexts before applying the manager contract. CSV errors preserve source, line,
 record, and byte provenance. It creates no accounts, output files, traces, or
 threads. Parsed requests and positions are retained together so future workers
@@ -376,12 +372,10 @@ to the manager. Output stays on the calling thread; workers own their source
 state and trace sinks. Batch publication errors must be sendable because the
 shared lifecycle failure type can cross worker boundaries.
 
-Bootstrap currently retains CSV parsing, preflight reader composition, file
-opening, UUID construction, trace sink setup, and artifact persistence. Its
-single and batch entry points delegate execution policy to managers. A local
-CSV output implementation satisfies the publication contract; compatibility
-error/report mappings retain existing CSV provenance and CLI behavior. Moving
-these concrete I/O responsibilities into adapters is a separate follow-up step.
+CSV parsing, preflight readers, file opening, source UUID construction, and
+trace setup belong to CSV adapters. The CSV output adapter implements the
+publication contract; adapter error/report mappings retain CSV provenance.
+Artifact adapters own run UUID generation, file storage, and serialized reports.
 
 ## Adapter-owned CLI, CSV composition, and artifacts
 
@@ -398,7 +392,7 @@ partial account publication, trace discovery, and the file/stdout tee writer.
 outcome counts, and completion status. Artifact persistence writes JSON and
 diagnostics while preserving the existing filename-only report schema.
 
-Bootstrap retains invocation composition and compatibility exports for its
-previous configuration and payment APIs. Adapters depend on managers and other
-adapters, never on bootstrap. Removing compatibility modules and completing the
-composition-root cleanup is reserved for the next refactor step.
+Bootstrap exposes only its composition entry point and result/error types.
+Adapters depend on managers and other adapters, never on bootstrap. CLI
+invocation handling and artifact completion live under `adapters/cli/run`; all
+financial execution policy remains in managers.
