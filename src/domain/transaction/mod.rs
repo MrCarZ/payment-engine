@@ -1,7 +1,6 @@
-use std::{
-    error::Error,
-    fmt::{Display, Formatter, Result as FmtResult},
-};
+mod error;
+
+pub use error::TransitionError;
 
 use super::{ClientId, PositiveAmount, TransactionId};
 
@@ -28,7 +27,7 @@ pub enum LifecycleAction {
 }
 
 /// An accepted original transaction. Rejected original requests are tracked by
-/// the application layer and must not be represented as posted transactions.
+/// the payment manager and must not be represented as posted transactions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Transaction {
     id: TransactionId,
@@ -40,7 +39,7 @@ pub struct Transaction {
 
 impl Transaction {
     /// Records an original whose account operation has succeeded. This does not
-    /// apply a deposit or withdrawal; the application coordinates that operation.
+    /// apply a deposit or withdrawal; the manager coordinates that operation.
     pub const fn posted(
         id: TransactionId,
         client: ClientId,
@@ -77,7 +76,7 @@ impl Transaction {
     }
 
     /// Validates a lifecycle action and returns a candidate record. The original
-    /// is unchanged on success or failure. The application must validate reference
+    /// is unchanged on success or failure. The manager must validate reference
     /// ownership and commit the candidate together with the account update.
     pub fn transition(&self, action: LifecycleAction) -> Result<Self, TransitionError> {
         if self.transaction_type != Type::Deposit {
@@ -99,28 +98,6 @@ impl Transaction {
         })
     }
 }
-
-/// Lifecycle failures are translated into processing outcomes by the manager.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransitionError {
-    NotDisputable,
-    AlreadyDisputed,
-    NotDisputed,
-    AlreadyChargedBack,
-}
-
-impl Display for TransitionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        f.write_str(match self {
-            Self::NotDisputable => "only accepted deposits can be disputed",
-            Self::AlreadyDisputed => "transaction is already disputed",
-            Self::NotDisputed => "transaction is not under dispute",
-            Self::AlreadyChargedBack => "transaction has already been charged back",
-        })
-    }
-}
-
-impl Error for TransitionError {}
 
 #[cfg(test)]
 mod tests;

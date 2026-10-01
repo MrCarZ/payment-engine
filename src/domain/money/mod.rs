@@ -1,9 +1,12 @@
 use std::{
-    error::Error,
     fmt::{Display, Formatter, Result as FmtResult},
     iter::repeat_n,
     str::FromStr,
 };
+
+mod error;
+
+pub use error::{AmountError, MoneyError};
 
 /// Exact signed money in units of 0.0001.
 ///
@@ -39,28 +42,6 @@ impl Money {
             .ok_or(MoneyError::Overflow)
     }
 }
-
-/// Invalid decimal input or a value outside the supported scaled range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MoneyError {
-    InvalidFormat,
-    ExcessPrecision,
-    Overflow,
-}
-
-impl Display for MoneyError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        f.write_str(match self {
-            Self::InvalidFormat => {
-                "expected a decimal number with digits before and after any decimal point"
-            }
-            Self::ExcessPrecision => "money supports at most four fractional digits",
-            Self::Overflow => "money exceeds the supported signed 128-bit scaled range",
-        })
-    }
-}
-
-impl Error for MoneyError {}
 
 impl FromStr for Money {
     type Err = MoneyError;
@@ -153,30 +134,6 @@ impl FromStr for PositiveAmount {
 impl Display for PositiveAmount {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         self.0.fmt(f)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AmountError {
-    InvalidMoney(MoneyError),
-    NonPositive,
-}
-
-impl Display for AmountError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        match self {
-            Self::InvalidMoney(error) => error.fmt(f),
-            Self::NonPositive => f.write_str("transaction amount must be greater than zero"),
-        }
-    }
-}
-
-impl Error for AmountError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::InvalidMoney(error) => Some(error),
-            Self::NonPositive => None,
-        }
     }
 }
 

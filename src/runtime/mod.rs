@@ -1,11 +1,10 @@
 //! Execution configuration, component wiring, and lifecycle ownership.
 
-use std::{
-    error::Error,
-    ffi::OsString,
-    fmt::{Display, Formatter, Result as FmtResult},
-    path::PathBuf,
-};
+use std::{ffi::OsString, path::PathBuf};
+
+mod error;
+
+pub use error::ArgumentError;
 
 /// The required input path, retained without requiring Unicode filenames.
 #[derive(Debug, PartialEq, Eq)]
@@ -27,15 +26,3 @@ impl InputConfig {
         })
     }
 }
-
-/// The CLI requires exactly one input-path argument.
-#[derive(Debug, PartialEq, Eq)]
-pub struct ArgumentError;
-
-impl Display for ArgumentError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        f.write_str("Expected exactly one input path. Usage: payment-engine <transactions.csv>")
-    }
-}
-
-impl Error for ArgumentError {}

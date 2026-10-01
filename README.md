@@ -2,7 +2,7 @@
 
 A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
-## Current status: Phase 4
+## Current status: Phase 5
 
 The crate and component boundaries are established. The binary validates exactly
 one input-path argument. It does not open files or process payments yet. A valid
@@ -34,11 +34,20 @@ Accepted originals are represented by `Transaction`, retaining ID, owner, type,
 amount, and lifecycle state. Only deposits can transition from posted to disputed;
 resolution returns them to posted, and chargeback is terminal. Repeated or
 inapplicable actions return typed transition errors. `transition` returns a new
-candidate without mutating the original or touching balances. The manager in the
-next phase will verify ownership and commit account and transaction changes
+candidate without mutating the original or touching balances. The payment manager verifies ownership and commits account and transaction changes
 together. Rejected originals must not be constructed as posted transactions. The public
 `domain::transaction` module scopes the `State` and `Type` enums; consumers import
 them directly or alias them when other domain types would conflict.
+
+`manager::payment` exposes `PaymentManager`, scoped `Request`,
+`Outcome`, and `Reason` enums, and fatal `ProcessingError` failures. The manager
+owns accounts and original records, including rejected originals. It calculates
+candidate account and transaction states before committing either. Valid ignored
+or rejected requests referencing an unseen client create a zero-balance account.
+Arithmetic failures leave account and original records unchanged. Duplicate
+original IDs are currently rejected to prevent double application; identical
+replay handling is reserved for Phase 6. Lifecycle references use the stored
+amount and never replace the original processing outcome.
 
 ```sh
 cargo build
@@ -54,15 +63,23 @@ under `cfg(test)`. Parameterized cases use `rstest` as a development dependency;
 CLI integration tests stay in the top-level `tests` directory.
 
 - `domain`: financial types and invariants; no CSV or tracing dependencies.
-- `application`: payment requests and coordination of domain operations.
+- `manager`: payment requests and coordination of domain operations.
 - `adapters`: external input/output formats.
 - `observability`: generic structured trace delivery.
 - `runtime`: execution configuration, wiring, and lifecycle.
 - Binary: process arguments, diagnostics, and exit status.
 
 Components will be constructed explicitly rather than accessed through globals.
-Future adapters call the application layer, which calls domain methods. Payment
+Future adapters call managers, which call domain methods. Payment
 trace mapping stays outside the shared observability service.
 
 CSV, Serde, JSON, and UTC timestamp dependencies are declared for later phases.
 Account output is reserved for stdout; diagnostics use stderr.
+
+Payment manager implementation, outcomes/reasons, and original-record storage
+live in `manager/payment/mod.rs`, with unit tests in `tests.rs`. Requests and
+errors live in `request.rs` and `error.rs`, re-exported through the payment module.
+
+Module-local errors for accounts, money, transaction transitions, and runtime
+arguments live in each module's `error.rs`, re-exported through its `mod.rs`.
+Identifier parsing retains the standard library `ParseIntError`.
