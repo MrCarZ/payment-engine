@@ -2,7 +2,7 @@
 
 A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
-## Current status: Phase 9
+## Current status: Phase 10
 
 The crate and component boundaries are established. The binary validates exactly
 one input-path argument. It does not open files or process payments yet. A valid
@@ -151,11 +151,43 @@ error preserved through its source chain. The sink does not select files or writ
 
 `adapters::observability::memory::InMemoryTraceService` records timestamped structured events
 in order for consumer tests. The shared service contains no payment rules or
-partner-specific event mappings. Those mappings are reserved for Phase 10;
-runtime construction and mandatory failure handling belong to Phase 11.
+partner-specific event mappings. Runtime construction and mandatory failure
+handling belong to Phase 11.
 
 Observability follows the same domain/manager/adapter structure as payment.
 The trace contract has no CSV dependencies, and event types depend on neither
 managers nor adapters. The shared clock contract belongs to `domain/clock`,
 available to any service in the codebase. The default system clock belongs to
 `adapters/clock`; concrete trace delivery implementations also belong to adapters.
+
+## Payment trace mapping
+
+`manager::payment::trace` builds events from validated requests, processing
+reports, fatal processing errors, and caller-supplied run summaries. These are
+pure mappings: the payment manager keeps no trace dependency, and delivery never
+invokes payment processing. The caller delivers the returned `Event` through
+`TraceService` and handles delivery failures without retrying an applied payment.
+
+Event names are `payment.request_applied`, `payment.request_ignored`,
+`payment.request_rejected`, `payment.request_replayed`,
+`payment.processing_failed`, and `payment.run_finished`. Business reasons use
+explicit snake-case codes suitable for aggregation. Applied events use Info;
+ignored/rejected events use Warn; fatal processing/input failures use Error.
+Replay events preserve the original outcome and reason while explicitly setting
+`replayed=true`, so an earlier success is not another balance movement.
+
+Events identify the run, source, optional partner, client, transaction, and request
+type where available. The run ID is the correlation ID. Amounts, balances, raw
+rows, and underlying error messages are omitted. Source and client identities
+remain trace attributes rather than proposed metric labels.
+
+`adapters::payment::csv::trace` adds record/line/byte provenance to payment
+events and maps CSV failures to `payment.input_failed` with stable reason codes
+and the invalid field where available. Transport-specific mappings stay in the
+adapter; API/webhook adapters can reuse the manager mapping independently.
+
+Run `Summary` counts applied, ignored, rejected, replayed, input errors, and
+processing errors. Applied/ignored/rejected exclude replays; the replay count
+includes retries of any original outcome. Run state is Completed or Failed,
+with Info or Error severity respectively. Accounting, delivery, flushing, and
+CLI wiring remain the responsibility of the upcoming run coordinator.

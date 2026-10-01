@@ -4,6 +4,8 @@ pub mod input;
 pub mod output;
 pub mod row;
 
+pub(crate) mod trace;
+
 /// CSV record index (header is zero), one-based line, and zero-based byte offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecordPosition {
