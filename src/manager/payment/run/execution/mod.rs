@@ -1,11 +1,15 @@
 //! Processing, account publication, and final trace delivery policy.
 use super::{Coordinator, InputFailure, Output, Record, Summary};
 use crate::manager::{
-    observability::TraceService,
+    observability::{TraceError, TraceService},
     payment::{
         SourceContext,
         trace::{State, run_finished},
     },
+};
+use std::{
+    io::Error as IoError,
+    panic::{AssertUnwindSafe, catch_unwind},
 };
 mod error;
 pub use error::{Failure, RunError};
@@ -45,8 +49,8 @@ pub(crate) fn finish_as<R, E, O>(
 ) -> Result<Summary, RunError<R, E, O>> {
     let mut failure = result.err().map(|failure| RunError::new(failure, summary));
     for result in [
-        trace.emit(run_finished(source, summary, state)),
-        trace.flush(),
+        deliver(|| trace.emit(run_finished(source, summary, state))),
+        deliver(|| trace.flush()),
     ] {
         if let Err(error) = result {
             match &mut failure {
@@ -59,6 +63,14 @@ pub(crate) fn finish_as<R, E, O>(
         Some(error) => Err(error),
         None => Ok(summary),
     }
+}
+
+fn deliver(operation: impl FnOnce() -> Result<(), TraceError>) -> Result<(), TraceError> {
+    catch_unwind(AssertUnwindSafe(operation)).unwrap_or_else(|_| {
+        Err(TraceError::new(IoError::other(
+            "trace finalization panicked",
+        )))
+    })
 }
 
 #[cfg(test)]

@@ -8,8 +8,10 @@ use crate::manager::{
 use std::{
     collections::VecDeque,
     convert::Infallible,
+    io::Error as IoError,
     num::NonZeroUsize,
     panic::{AssertUnwindSafe, catch_unwind},
+    sync::{Arc, Mutex},
     thread::{Builder, scope},
 };
 
@@ -19,6 +21,7 @@ pub(super) struct Job<R, T> {
     pub(super) records: Vec<R>,
     pub(super) trace: T,
 }
+type SharedJob<R, T> = Arc<Mutex<Option<Job<R, T>>>>;
 pub(super) struct Completed<R, T, O> {
     pub(super) index: usize,
     pub(super) source: SourceContext,
@@ -58,17 +61,17 @@ fn execute_group<R: Record + Send, T: TraceService + Send, O: Send>(
             };
             let index = job.index;
             let source = job.source.clone();
-            match Builder::new()
-                .name(format!("payment-source-{index}"))
-                .spawn_scoped(scope, move || process(job))
-            {
+            match launch(job, |shared| {
+                Builder::new()
+                    .name(format!("payment-source-{index}"))
+                    .spawn_scoped(scope, move || {
+                        let job = shared.lock().unwrap().take().unwrap();
+                        process(job)
+                    })
+            }) {
                 Ok(handle) => handles.push((index, source, handle)),
-                Err(error) => {
-                    results.push(Completed::failed(
-                        index,
-                        source,
-                        SourceFailure::WorkerSpawn(error),
-                    ));
+                Err(failure) => {
+                    results.push(*failure);
                     break;
                 }
             }
@@ -81,6 +84,28 @@ fn execute_group<R: Record + Send, T: TraceService + Send, O: Send>(
         }
         results
     })
+}
+
+// Retain ownership until the thread has been successfully created. A failed
+// spawn drops its closure, but must leave the trace available for finalization.
+pub(super) fn launch<R, T, O, H>(
+    job: Job<R, T>,
+    spawn: impl FnOnce(SharedJob<R, T>) -> Result<H, IoError>,
+) -> Result<H, Box<Completed<R, T, O>>> {
+    let shared = Arc::new(Mutex::new(Some(job)));
+    match spawn(Arc::clone(&shared)) {
+        Ok(handle) => Ok(handle),
+        Err(error) => {
+            let job = shared.lock().unwrap().take().unwrap();
+            Err(Box::new(Completed {
+                index: job.index,
+                source: job.source,
+                coordinator: Coordinator::new(),
+                trace: Some(job.trace),
+                result: Err(SourceFailure::WorkerSpawn(error)),
+            }))
+        }
+    }
 }
 
 fn cancel_pending<R, T, O>(pending: VecDeque<Job<R, T>>, completed: &mut Vec<Completed<R, T, O>>) {

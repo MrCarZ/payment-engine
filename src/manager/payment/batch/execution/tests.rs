@@ -1,4 +1,9 @@
-use super::{Failure, run};
+use super::{
+    Failure,
+    completion::finalize,
+    run,
+    workers::{Job, launch},
+};
 use crate::{
     adapters::observability::memory::InMemoryTraceService,
     domain::{
@@ -205,4 +210,113 @@ fn independent_non_csv_sources_overlap_in_separate_workers() {
     .unwrap();
     assert_eq!(report.summary.applied, 3);
     assert_eq!(*gate.entered.lock().unwrap(), 3);
+}
+
+struct CleanupTrace {
+    source: String,
+    attempts: Arc<Mutex<Vec<(String, String)>>>,
+    panic_emit: bool,
+    panic_flush: bool,
+}
+impl TraceService for CleanupTrace {
+    fn emit(&mut self, event: Event) -> Result<(), TraceError> {
+        self.attempts
+            .lock()
+            .unwrap()
+            .push((self.source.clone(), event.event_name));
+        assert!(!self.panic_emit, "summary delivery panicked");
+        Ok(())
+    }
+    fn flush(&mut self) -> Result<(), TraceError> {
+        self.attempts
+            .lock()
+            .unwrap()
+            .push((self.source.clone(), "flush".into()));
+        assert!(!self.panic_flush, "flush panicked");
+        Ok(())
+    }
+}
+
+#[rstest]
+#[case(true, false)]
+#[case(false, true)]
+#[case(true, true)]
+fn setup_failure_finalizes_all_prepared_traces_despite_panics(
+    #[case] panic_emit: bool,
+    #[case] panic_flush: bool,
+) {
+    let batch = ValidatedBatch::try_from(vec![
+        source("a", 1, 1, &["1"]),
+        source("b", 2, 2, &["1"]),
+        source("c", 3, 3, &["1"]),
+    ])
+    .unwrap();
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let mut output = Snapshot::default();
+    let error = run(batch, &mut output, NonZeroUsize::MIN, |source| {
+        if source.source_id == "c" {
+            return Err(TraceError::new(IoError::other("primary setup failure")));
+        }
+        Ok(CleanupTrace {
+            source: source.source_id.clone(),
+            attempts: Arc::clone(&attempts),
+            panic_emit: source.source_id == "a" && panic_emit,
+            panic_flush: source.source_id == "a" && panic_flush,
+        })
+    })
+    .unwrap_err();
+    assert!(
+        matches!(error.failure.as_ref(), Failure::TraceSetup { error, .. } if error.to_string().contains("primary setup failure"))
+    );
+    assert_eq!(error.report.summary.applied, 0);
+    assert_eq!(output.calls, 0);
+    assert_eq!(
+        error.additional_trace_errors.len(),
+        usize::from(panic_emit) + usize::from(panic_flush)
+    );
+    assert_eq!(
+        *attempts.lock().unwrap(),
+        vec![
+            ("a".into(), "payment.run_finished".into()),
+            ("a".into(), "flush".into()),
+            ("b".into(), "payment.run_finished".into()),
+            ("b".into(), "flush".into()),
+        ]
+    );
+}
+
+#[test]
+fn spawn_failure_retains_the_trace_for_finalization() {
+    let (source, records) = source("a", 1, 1, &["1"]).into_parts();
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let job = Job {
+        index: 0,
+        source,
+        records,
+        trace: CleanupTrace {
+            source: "a".into(),
+            attempts: Arc::clone(&attempts),
+            panic_emit: false,
+            panic_flush: false,
+        },
+    };
+    let failure = match launch::<_, _, IoError, ()>(job, |closure_state| {
+        drop(closure_state);
+        Err(IoError::other("thread creation refused"))
+    }) {
+        Err(failure) => failure,
+        Ok(()) => panic!("expected spawn failure"),
+    };
+    let report = finalize(vec![*failure], false);
+    assert_eq!(report.summary.applied, 0);
+    assert!(
+        matches!(report.sources[0].error.as_ref().unwrap().failure.as_ref(), RunFailure::WorkerSpawn(error) if error.to_string() == "thread creation refused")
+    );
+    assert_eq!(
+        *attempts.lock().unwrap(),
+        vec![
+            ("a".into(), "payment.run_finished".into()),
+            ("a".into(), "flush".into()),
+        ]
+    );
 }

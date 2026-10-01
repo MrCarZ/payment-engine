@@ -4,8 +4,8 @@ use crate::{
     adapters::{
         artifacts::{
             filesystem::{Tee, file_name, publish, trace_files},
-            persist,
             report::{Report, Status},
+            write_diagnostics, write_report,
         },
         cli::config::{Config, Invocation},
         payment::csv::processing::{
@@ -16,7 +16,12 @@ use crate::{
     },
     manager::payment::run::Summary,
 };
-use std::{io::Write, path::PathBuf, time::Instant};
+use std::{
+    io::{Result as IoResult, Write},
+    mem::replace,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 mod error;
 pub use error::ArtifactError;
@@ -28,7 +33,8 @@ pub struct Execution {
 }
 
 /// Keeps stdout account output while saving a copy and reports under a fresh
-/// run directory. Failed runs retain partial output without publishing accounts.csv.
+/// run directory. Processing failures retain partial output. Later artifact
+/// failures preserve already published accounts and return a failed run result.
 pub(crate) fn run(
     invocation: Invocation,
     output: impl Write,
@@ -78,8 +84,9 @@ pub(crate) fn run(
     {
         result = Err(ArtifactError::from(error));
     }
-    let traces = trace_files(&directory).map_err(ArtifactError::from)?;
-    let report = Report {
+    let published = result.is_ok();
+    let traces = discover_traces(&directory, &mut result, trace_files);
+    let mut report = Report {
         run_id,
         exit_code: if result.is_ok() { 0 } else { 1 },
         status: if result.is_ok() {
@@ -89,12 +96,12 @@ pub(crate) fn run(
         },
         elapsed_seconds: started.elapsed().as_secs_f64(),
         input_files: Report::filenames(&input_paths),
-        account_file: if result.is_ok() {
+        account_file: if published {
             Some(file_name(&accounts))
         } else {
             None
         },
-        partial_account_file: if result.is_err() {
+        partial_account_file: if !published {
             Some(file_name(&partial))
         } else {
             None
@@ -104,8 +111,18 @@ pub(crate) fn run(
         sources,
         error: result.as_ref().err().map(ToString::to_string),
     };
-    let persist = persist(&directory, &report, &traces).map_err(ArtifactError::from);
-    if let Err(error) = persist {
+    if let Err(error) = write_diagnostics(&directory, &report, &traces).map_err(ArtifactError::from)
+    {
+        result = combine(result, error);
+    }
+    report.status = if result.is_ok() {
+        Status::Completed
+    } else {
+        Status::Failed
+    };
+    report.exit_code = if result.is_ok() { 0 } else { 1 };
+    report.error = result.as_ref().err().map(ToString::to_string);
+    if let Err(error) = write_report(&directory, &report).map_err(ArtifactError::from) {
         result = combine(result, error);
     }
     result.map_err(|error| ArtifactError::Run {
@@ -118,6 +135,21 @@ pub(crate) fn run(
     })
 }
 
+fn discover_traces(
+    directory: &Path,
+    result: &mut Result<(), ArtifactError>,
+    discover: impl FnOnce(&Path) -> IoResult<Vec<PathBuf>>,
+) -> Vec<PathBuf> {
+    match discover(directory) {
+        Ok(paths) => paths,
+        Err(error) => {
+            let primary = replace(result, Ok(()));
+            *result = combine(primary, ArtifactError::from(error));
+            Vec::new()
+        }
+    }
+}
+
 fn combine(result: Result<(), ArtifactError>, error: ArtifactError) -> Result<(), ArtifactError> {
     Err(match result {
         Ok(()) => error,
@@ -127,3 +159,6 @@ fn combine(result: Result<(), ArtifactError>, error: ArtifactError) -> Result<()
         },
     })
 }
+
+#[cfg(test)]
+mod tests;

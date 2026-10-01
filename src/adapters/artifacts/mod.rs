@@ -9,14 +9,26 @@ pub use error::Error;
 pub mod filesystem;
 pub mod identity;
 pub mod report;
-use filesystem::create_file;
+use filesystem::{create_file, publish};
 use report::Report;
 
-pub fn persist(directory: &Path, report: &Report, traces: &[PathBuf]) -> Result<(), Error> {
-    let mut file = create_file(&directory.join("report.json"))?;
+/// Publish only a fully written report; failed writes retain a partial artifact.
+pub fn write_report(directory: &Path, report: &Report) -> Result<(), Error> {
+    let partial = directory.join("report.partial.json");
+    let mut file = create_file(&partial)?;
     to_writer_pretty(&mut file, report)?;
     file.write_all(b"\n")?;
     file.flush()?;
+    drop(file);
+    publish(&partial, &directory.join("report.json"))?;
+    Ok(())
+}
+
+pub fn write_diagnostics(
+    directory: &Path,
+    report: &Report,
+    traces: &[PathBuf],
+) -> Result<(), Error> {
     let mut diagnostics = create_file(&directory.join("diagnostics.log"))?;
     writeln!(diagnostics, "Status: {}", report.status)?;
     for path in traces {

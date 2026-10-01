@@ -210,7 +210,10 @@ Account output begins only after all input has processed successfully and the
 request trace buffer has flushed. Both successful and failed runs attempt a
 run-summary event and explicit final flush. `RunError` retains the primary
 failure, work counts, and additional trace errors. Processing errors identify the
-source and CSV position. No accounts are published on processing/input failures.
+source and CSV position. Summary-delivery and final-flush panics are converted
+into trace errors; both operations are attempted independently, retaining any
+earlier failure.
+No accounts are published on processing/input failures.
 Output failures may leave partial stdout; a summary-delivery or final-flush
 failure may occur after complete account output, and still yields a failure exit
 status. A Completed summary describes processing/output completion, not a
@@ -312,8 +315,9 @@ deterministic identification, not encryption. All sources
 are parsed and validated before trace initialization or payment processing.
 If a worker fails, its active peers finish and later groups are skipped. A worker
 panic is reported as a failure. Processing failures suppress aggregate account
-output; final trace failures can occur after account output. Every initialized
-sink is finalized without retrying financial operations. The worker bound limits
+output; final trace failures can occur after account output. Finalization is
+attempted for every initialized sink, including failed thread starts and cancelled
+sources. Cleanup continues if a sink panics, without retrying financial operations. The worker bound limits
 active processing, not buffered input memory or the number of open trace files.
 
 ```sh
@@ -339,14 +343,24 @@ output/<run-id>/
 
 The CLI preserves stdout account output while writing a copy to an exclusive
 `accounts.partial.csv`. Only a successful processing/output/trace lifecycle
-renames it to `accounts.csv`. Failed runs retain the partial file, which may be
+renames it to `accounts.csv`. Processing/output/trace failures retain the partial file, which may be
 empty or contain incomplete output. The report includes run identity, status,
 elapsed time, input filenames, outcome counts, and per-source batch results.
 `account_file`, `partial_account_file`, and `trace_files` contain filenames
 relative to the run directory. `input_files` contains basenames only. File
 error descriptions in reports also use basenames. Diagnostics record status, trace paths, and execution errors. Storage
 failures can prevent reports or logs from being fully written; these propagate
-as CLI failures and do not cause payments to be retried. Publication and flush
+as CLI failures and do not cause payments to be retried. Trace-discovery and
+diagnostics failures preserve any earlier processing error. Diagnostics are
+attempted before the final report, so a saved report includes diagnostics failures
+in its overall status, exit code, and error. Source statuses describe their
+processing lifecycle; account filenames identify the actual published or partial
+file, even when a later artifact failure makes the overall run fail.
+Reports are written to `report.partial.json` and renamed to `report.json` only
+after writing and flushing succeed. A report write/publication failure can leave
+the partial report and already published accounts, but does not publish a final
+report claiming success. Diagnostics describe the state before report publication.
+Publication and flush
 provide no durable-storage guarantee.
 
 ```sh
