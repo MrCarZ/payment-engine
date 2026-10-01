@@ -132,6 +132,7 @@ fn successful_cli_outputs_accounts_and_creates_a_separate_csv_trace() {
         from_str(&String::from_utf8(read(run.join("report.json")).unwrap()).unwrap()).unwrap();
     assert_eq!(report["status"], "completed");
     let run_id = report["run_id"].as_str().unwrap();
+    assert_eq!(Uuid::parse_str(run_id).unwrap().get_version_num(), 4);
     assert_eq!(run.file_name().unwrap().to_str().unwrap(), run_id);
     assert_eq!(report["summary"]["applied"], 5);
     assert_eq!(report["account_file"], "accounts.csv");
@@ -203,6 +204,13 @@ fn repeated_invocations_preserve_existing_traces_and_input() {
     assert!(fixture.invoke().status.success());
     assert_eq!(fixture.traces().len(), 2);
     assert_eq!(fixture.runs().len(), 2);
+    let run_ids: Vec<_> = fixture
+        .runs()
+        .iter()
+        .map(|path| Uuid::parse_str(path.file_name().unwrap().to_str().unwrap()).unwrap())
+        .collect();
+    assert_ne!(run_ids[0], run_ids[1]);
+    assert!(run_ids.iter().all(|id| id.get_version_num() == 4));
     assert_eq!(read(original_path).unwrap(), original);
     assert_eq!(read(&fixture.input).unwrap(), csv.as_bytes());
     let source_ids: Vec<_> = fixture
@@ -301,6 +309,7 @@ fn cli_processes_disjoint_csvs_with_shared_run_identity_and_separate_traces() {
     }
     assert_eq!(applied, 6);
     assert_eq!(run_ids[0], run_ids[1]);
+    assert_eq!(Uuid::parse_str(&run_ids[0]).unwrap().get_version_num(), 4);
     assert_ne!(source_ids[0], source_ids[1]);
     let mut expected_ids: Vec<_> = [&fixture.input, &other]
         .iter()

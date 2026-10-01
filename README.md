@@ -346,3 +346,8 @@ the URL namespace. Single and batch execution share this identity scheme; native
 encoding preserves non-Unicode paths and identities are platform-local. Reports
 use `input_files`, `account_file`, `partial_account_file`, and `trace_files` with
 basenames only. File error descriptions in reports also omit full paths.
+
+## Run identity
+
+Each invocation generates a fresh random UUID v4 shared by its source contexts,
+trace correlation IDs, report, and output directory. Source IDs remain UUID v5.

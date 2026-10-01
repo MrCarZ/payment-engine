@@ -1,16 +1,13 @@
 use std::{
     fs::{File, OpenOptions, create_dir, create_dir_all},
     path::{Path, PathBuf},
-    process::id,
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 use uuid::Uuid;
 
 use crate::{
-    adapters::{clock::SystemClock, observability::csv::CsvTraceService},
+    adapters::observability::csv::CsvTraceService,
     bootstrap::config::InputConfig,
-    domain::clock::Clock,
     manager::{
         observability::TraceError,
         payment::{SourceContext, run::Summary},
@@ -18,8 +15,6 @@ use crate::{
 };
 
 use super::{Failure, RunError};
-
-static RUN_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub(super) struct Resources {
     pub input: File,
@@ -79,14 +74,9 @@ pub(crate) fn source_id(canonical: &Path) -> String {
     .to_string()
 }
 
-/// Creates an execution identity for source traces and output directories.
+/// A fresh execution identity, shared by its output directory and source traces.
 pub(crate) fn new_run_id() -> String {
-    format!(
-        "{}-{}-{}",
-        SystemClock.now().unix_timestamp_nanos(),
-        id(),
-        RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    )
+    Uuid::new_v4().to_string()
 }
 
 pub(super) fn create_trace(
