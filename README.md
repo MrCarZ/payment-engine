@@ -4,9 +4,10 @@ A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
 ## Current status: Phase 13
 
-The binary streams one CSV synchronously or processes multiple validated CSVs
-concurrently. Account balances use stdout; trace files use per-run directories
-under `output`. Diagnostics and trace locations use stderr.
+The binary streams a single CSV synchronously, or validates and processes multiple
+CSVs concurrently with disjoint clients. It writes sorted account balances to
+stdout and stores each invocation's artifacts under `output/<run-id>/`.
+Inputs remain unchanged. Use `--output-dir` to choose another output root.
 
 The domain now exposes distinct client (`u16`) and transaction (`u32`) identifiers,
 signed `Money`, and strictly positive `PositiveAmount` transaction amounts.
@@ -211,15 +212,23 @@ failure may occur after complete account output, and still yields a failure exit
 status. A Completed summary describes processing/output completion, not a
 guarantee that the final trace flush succeeded. Flush is not durable storage.
 
+The CLI's `bootstrap::artifacts::execute` creates an exclusive run directory,
+opens the input sources, and creates one indexed trace CSV per source there.
+Each invocation gets a fresh random UUID v4 run ID, shared by its source
+contexts, trace correlation IDs, JSON report, and output directory. Existing inputs and run artifacts are preserved. Setup failures stop
+before processing; failures before trace initialization cannot emit a trace
+summary. The CLI still attempts a JSON report when processing or setup fails
+after artifact storage has been initialized.
+
 ```sh
 cargo run -- transactions.csv > accounts.csv
 ```
 
 Success exits with status zero; argument, setup, processing, output, and trace
-failures exit with a nonzero status. The CLI supplies the input path as source
-identity and leaves partner identity absent. Library callers can supply their
+failures exit with a nonzero status. The CLI derives a UUID v5 source identity from the canonical input path
+using the URL namespace and native path bytes and leaves partner identity absent. Library callers can supply their
 own run/source/partner context and destinations through `run`. Multiple input
-paths select concurrent batch execution after full preflight validation.
+paths select validated concurrent batch execution.
 
 Bootstrap files are organized by responsibility:
 
@@ -237,8 +246,8 @@ bootstrap/
     └── tests.rs
 ```
 
-The root only declares modules. `config` validates arguments and preserves
-native paths. `payment/setup.rs` constructs input, trace file, clock-backed run
+The root only declares modules. `config::Invocation` validates input paths and
+the optional output root while preserving native paths. `payment/setup.rs` constructs input, trace file, clock-backed run
 identity, and source context. `payment/mod.rs` connects CSV input to the manager
 coordinator, publishes account output, and finalizes traces. Execution errors
 remain in `payment/error.rs` with source/position context and secondary failures.
@@ -283,9 +292,8 @@ contexts before applying the manager contract. CSV errors preserve source, line,
 record, and byte provenance. It creates no accounts, output files, traces, or
 threads. Parsed requests and positions are retained together so future workers
 can process the exact validated snapshot without reopening mutable files.
-This preflight API buffers all batch records in memory; the existing single-CSV
-CLI continues to stream. Bounded-memory batch input is a future extension.
-
+This preflight API buffers all batch records in memory; single-CSV execution
+continues to stream. Bounded-memory batch input is a future extension.
 
 
 ## Concurrent batch execution
@@ -297,7 +305,10 @@ between sources is unspecified. Reports retain input order and aggregate account
 output is sorted by client ID. The CLI uses available parallelism, falling back
 to one worker; library callers can supply a nonzero worker limit.
 
-CLI inputs are opened and canonicalized to reject duplicate files. All sources
+CLI inputs are opened and canonicalized to reject duplicate files. Single and
+batch runs derive the same UUID v5 for a given canonical path. Paths are not
+exposed in source IDs; identity is stable on the same platform. This is
+deterministic identification, not encryption. All sources
 are parsed and validated before trace initialization or payment processing.
 If a worker fails, its active peers finish and later groups are skipped. A worker
 panic is reported as a failure. Processing failures suppress aggregate account
@@ -306,10 +317,16 @@ sink is finalized without retrying financial operations. The worker bound limits
 active processing, not buffered input memory or the number of open trace files.
 
 ```sh
-cargo run -- first.csv second.csv
+cargo run -- tests/fixtures/input/payments-a.csv tests/fixtures/input/payments-b.csv
 ```
 
 ## Per-run artifacts
+
+Run these commands from the crate root. `tests/fixtures/input` contains only source
+CSVs, `tests/fixtures/expected` contains reference account snapshots, and generated
+run files belong to `output`. Large generated inputs and run artifacts
+are ignored by Git. The sample generator and fixture instructions are documented
+in `tests/fixtures/README.md`.
 
 ```text
 output/<run-id>/
@@ -324,30 +341,19 @@ The CLI preserves stdout account output while writing a copy to an exclusive
 `accounts.partial.csv`. Only a successful processing/output/trace lifecycle
 renames it to `accounts.csv`. Failed runs retain the partial file, which may be
 empty or contain incomplete output. The report includes run identity, status,
-elapsed time, input and artifact paths, outcome counts, and per-source batch results.
-Diagnostics record status, trace paths, and execution errors. Storage
+elapsed time, input filenames, outcome counts, and per-source batch results.
+`account_file`, `partial_account_file`, and `trace_files` contain filenames
+relative to the run directory. `input_files` contains basenames only. File
+error descriptions in reports also use basenames. Diagnostics record status, trace paths, and execution errors. Storage
 failures can prevent reports or logs from being fully written; these propagate
 as CLI failures and do not cause payments to be retried. Publication and flush
 provide no durable-storage guarantee.
 
 ```sh
-cargo run -- --output-dir output transactions.csv
-cargo run -- --output-dir output first.csv second.csv
+cargo run -- --output-dir output tests/fixtures/input/payments-a.csv
+cargo run -- --output-dir output tests/fixtures/input/payments-a.csv tests/fixtures/input/payments-b.csv
 ```
 
 Every invocation creates a new run subdirectory, including failed batch preflight
 runs once output storage is initialized. The output directory and trace paths are
 printed to stderr. No program logs or traces are written beside input CSVs.
-
-## Source identity and report references
-
-CLI source IDs are UUID v5 values derived from canonical native path bytes using
-the URL namespace. Single and batch execution share this identity scheme; native
-encoding preserves non-Unicode paths and identities are platform-local. Reports
-use `input_files`, `account_file`, `partial_account_file`, and `trace_files` with
-basenames only. File error descriptions in reports also omit full paths.
-
-## Run identity
-
-Each invocation generates a fresh random UUID v4 shared by its source contexts,
-trace correlation IDs, report, and output directory. Source IDs remain UUID v5.
