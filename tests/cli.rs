@@ -1,6 +1,6 @@
-use std::process::Command;
+use std::process::{Command, Output};
 
-fn invoke(args: &[&str]) -> std::process::Output {
+fn invoke(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_payment-engine"))
         .args(args)
         .output()

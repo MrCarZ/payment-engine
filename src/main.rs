@@ -1,9 +1,9 @@
-use std::{env, process::ExitCode};
+use std::{env::args_os, process::ExitCode};
 
 use payment_engine::runtime::InputConfig;
 
 fn main() -> ExitCode {
-    match InputConfig::from_args(env::args_os().skip(1)) {
+    match InputConfig::from_args(args_os().skip(1)) {
         Ok(_config) => {
             eprintln!("Input argument accepted; CSV processing is not implemented yet.");
             ExitCode::SUCCESS

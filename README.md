@@ -2,11 +2,25 @@
 
 A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
-## Current status: Phase 1
+## Current status: Phase 2
 
 The crate and component boundaries are established. The binary validates exactly
 one input-path argument. It does not open files or process payments yet. A valid
 invocation succeeds with an explicit status message on stderr and empty stdout.
+
+The domain now exposes distinct client (`u16`) and transaction (`u32`) identifiers,
+signed `Money`, and strictly positive `PositiveAmount` transaction amounts.
+Money uses `i128` units of 0.0001, checked addition/subtraction, and exact decimal
+parsing without floating point. Supported balances range from
+`-17014118346046923173168730371588410.5728` to
+`17014118346046923173168730371588410.5727`.
+
+Decimal input accepts surrounding whitespace, an optional sign, and one to four
+fractional digits or an integer. Digits are required before the decimal point
+and after it when present. Scientific notation and more than four fractional
+digits (including trailing zeros) are rejected. Display always emits four places
+and normalizes negative zero. Identifier parsing accepts surrounding whitespace
+and the complete underlying unsigned range, including zero.
 
 ```sh
 cargo build
