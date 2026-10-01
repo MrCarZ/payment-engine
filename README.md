@@ -293,7 +293,7 @@ sequenceDiagram
     Run->>Run: Count outcome and build Event
     Run->>Trace: Emit Event with source provenance
     Trace-->>Run: Delivery result
-    Note over Run,Trace: Repeat for each record; flush after successful processing
+    Note over Run,Trace: Repeat for each record. Flush after successful processing
     Run->>Trace: Flush request events
 ```
 
