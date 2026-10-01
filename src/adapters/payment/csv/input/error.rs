@@ -1,16 +1,20 @@
 use std::{
     error::Error,
     fmt::{Display, Formatter, Result as FmtResult},
-    num::ParseIntError,
 };
 
 use csv::Error as CsvError;
 
-use crate::{domain::payment::AmountError, manager::payment::Context};
+use crate::manager::payment::Context;
+
+use super::super::RecordPosition;
+
+pub use super::super::row::FieldError;
 
 #[derive(Debug)]
 pub struct InputError {
     pub context: Context,
+    pub position: RecordPosition,
     pub error_type: Type,
 }
 
@@ -23,35 +27,6 @@ pub enum Type {
         error: FieldError,
     },
     Csv(CsvError),
-}
-
-#[derive(Debug)]
-pub enum FieldError {
-    Identifier(ParseIntError),
-    Amount(AmountError),
-    MissingAmount,
-    UnknownType,
-}
-
-impl Display for FieldError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        match self {
-            Self::Identifier(error) => error.fmt(f),
-            Self::Amount(error) => error.fmt(f),
-            Self::MissingAmount => f.write_str("original transactions require an amount"),
-            Self::UnknownType => f.write_str("unsupported transaction type"),
-        }
-    }
-}
-
-impl Error for FieldError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Identifier(error) => Some(error),
-            Self::Amount(error) => Some(error),
-            _ => None,
-        }
-    }
 }
 
 impl Display for Type {
@@ -83,9 +58,9 @@ impl Display for InputError {
             f,
             "source {} at record {}, line {}, byte {}: {}",
             self.context.source.source_id,
-            self.context.position.record,
-            self.context.position.line,
-            self.context.position.byte,
+            self.position.record,
+            self.position.line,
+            self.position.byte,
             self.error_type
         )
     }

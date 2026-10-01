@@ -9,7 +9,7 @@ mod context;
 mod error;
 mod request;
 
-pub use context::{Context, RecordPosition, SourceContext};
+pub use context::{Context, SourceContext};
 pub use error::ProcessingError;
 pub use request::Request;
 

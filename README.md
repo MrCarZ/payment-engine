@@ -57,11 +57,12 @@ rejected withdrawal stays rejected after later deposits. Valid business outcomes
 reserve original IDs; fatal arithmetic failures do not. Replay detection applies
 only to originals, while repeated lifecycle events follow their state rules.
 
-`adapters::csv::input::Input` streams any `Read` source into requests plus processing
+`adapters::payment::csv::input::Input` streams any `Read` source into requests plus processing
 context. It reuses a row buffer, preserves input order, and stops permanently after
 yielding the first parse or read error. The caller supplies run/source/optional
-partner IDs; context also includes record index (header is zero), line, and byte
-offset. Source metadata is shared between records rather than copied per row.
+partner IDs through transport-independent processing context. CSV records and
+errors separately carry record index (header is zero), line, and byte offset.
+Source metadata is shared between records rather than copied per row.
 
 Headers must contain exactly `type`, `client`, `tx`, and `amount`, each once, in any
 order. Surrounding field whitespace is trimmed. Monetary rows require positive
@@ -86,7 +87,7 @@ CLI integration tests stay in the top-level `tests` directory.
 
 - `domain/payment`: payment types and invariants; no CSV or tracing dependencies.
 - `manager`: payment requests and coordination of domain operations.
-- `adapters`: external input/output formats.
+- `adapters/payment`: service-scoped external representations and I/O.
 - `observability`: generic structured trace delivery.
 - `runtime`: execution configuration, wiring, and lifecycle.
 - Binary: process arguments, diagnostics, and exit status.
@@ -108,3 +109,10 @@ Identifier parsing retains the standard library `ParseIntError`.
 
 Payment domain modules are grouped under `domain/payment`, matching the
 `manager/payment` boundary. Consumers import payment types from `domain::payment`.
+
+Payment adapters are grouped by service and transport under `adapters/payment/csv`.
+The borrowed `row::Row` representation converts into manager `Request` through
+`TryFrom`; it requires neither a reader nor processing context. The streaming
+input adapter owns headers, record lengths, source positions, and read failures,
+then delegates field validation to this conversion. Future API and webhook
+representations can independently target the same manager request boundary.

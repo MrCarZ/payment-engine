@@ -94,7 +94,7 @@ fn invalid_headers_are_rejected(#[case] input: &str) {
         Err(error) => error,
     };
     assert!(matches!(error.error_type, ErrorType::InvalidHeaders));
-    assert_eq!(error.context.position.record, 0);
+    assert_eq!(error.position.record, 0);
 }
 
 #[rstest]
@@ -116,8 +116,8 @@ fn invalid_fields_identify_the_field_and_record(#[case] row: &str, #[case] field
     assert!(
         matches!(error.error_type, ErrorType::InvalidField { field: actual, .. } if actual == field)
     );
-    assert_eq!(error.context.position.record, 1);
-    assert_eq!(error.context.position.line, 2);
+    assert_eq!(error.position.record, 1);
+    assert_eq!(error.position.line, 2);
     assert!(
         error
             .to_string()
@@ -141,8 +141,8 @@ fn first_error_is_terminal_and_later_rows_are_not_processed() {
     let first = input.next().unwrap().unwrap();
     manager.process(first.request).unwrap();
     let error = input.next().unwrap().unwrap_err();
-    assert_eq!(error.context.position.record, 2);
-    assert_eq!(error.context.position.line, 3);
+    assert_eq!(error.position.record, 2);
+    assert_eq!(error.position.line, 3);
     assert!(input.next().is_none());
     assert!(input.next().is_none());
     assert_eq!(
@@ -159,14 +159,14 @@ fn first_error_is_terminal_and_later_rows_are_not_processed() {
 
 #[test]
 fn fixture_preserves_order_context_and_integrates_with_manager() {
-    let fixture = include_str!("../../../../tests/fixtures/input/payments.csv");
+    let fixture = include_str!("../../../../../tests/fixtures/input/payments.csv");
     let input = Input::new(fixture.as_bytes(), source()).unwrap();
     let mut manager = PaymentManager::new();
     let mut previous_source = None;
     for (index, record) in input.enumerate() {
         let record = record.unwrap();
-        assert_eq!(record.context.position.record, index as u64 + 1);
-        assert_eq!(record.context.position.line, index as u64 + 2);
+        assert_eq!(record.position.record, index as u64 + 1);
+        assert_eq!(record.position.line, index as u64 + 2);
         assert_eq!(*record.context.source, source());
         if let Some(previous) = previous_source {
             assert!(Arc::ptr_eq(&previous, &record.context.source));

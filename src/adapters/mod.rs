@@ -1,3 +1,3 @@
-//! External input and output translation, including CSV records and snapshots.
+//! Service-scoped external input and output translation.
 
-pub mod csv;
+pub mod payment;

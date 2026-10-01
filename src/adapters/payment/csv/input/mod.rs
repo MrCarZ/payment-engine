@@ -2,10 +2,9 @@ use std::{io::Read, iter::FusedIterator, sync::Arc};
 
 use csv::{Position as CsvPosition, Reader, ReaderBuilder, StringRecord, Trim};
 
-use crate::{
-    domain::payment::{LifecycleAction, transaction::Type as TransactionType},
-    manager::payment::{Context, RecordPosition, Request, SourceContext},
-};
+use crate::manager::payment::{Context, Request, SourceContext};
+
+use super::{RecordPosition, row::Row};
 
 mod error;
 
@@ -15,6 +14,7 @@ pub use error::{FieldError, InputError, Type};
 pub struct Record {
     pub request: Request,
     pub context: Context,
+    pub position: RecordPosition,
 }
 
 /// Streaming input with one reusable row buffer. The first failure is yielded
@@ -44,7 +44,9 @@ impl<R: Read> Input<R> {
             .headers()
             .cloned()
             .map_err(|error| InputError {
-                context: input.context(error.position().unwrap_or(input.reader.position())),
+                context: input.context(),
+                position: input
+                    .record_position(error.position().unwrap_or(input.reader.position())),
                 error_type: Type::Csv(error),
             })?;
         let expected = ["type", "client", "tx", "amount"];
@@ -54,7 +56,9 @@ impl<R: Read> Input<R> {
                 .any(|name| headers.iter().filter(|field| field == name).count() != 1)
         {
             return Err(InputError {
-                context: input.context(headers.position().unwrap_or(input.reader.position())),
+                context: input.context(),
+                position: input
+                    .record_position(headers.position().unwrap_or(input.reader.position())),
                 error_type: Type::InvalidHeaders,
             });
         }
@@ -65,14 +69,17 @@ impl<R: Read> Input<R> {
         Ok(input)
     }
 
-    fn context(&self, position: &CsvPosition) -> Context {
+    fn context(&self) -> Context {
         Context {
             source: Arc::clone(&self.source),
-            position: RecordPosition {
-                record: position.record(),
-                line: position.line(),
-                byte: position.byte(),
-            },
+        }
+    }
+
+    fn record_position(&self, position: &CsvPosition) -> RecordPosition {
+        RecordPosition {
+            record: position.record(),
+            line: position.line(),
+            byte: position.byte(),
         }
     }
 
@@ -82,54 +89,18 @@ impl<R: Read> Input<R> {
         if self.record.len() != 4 && !(self.record.len() == 3 && self.columns[3] == 3) {
             return Err(Type::InvalidRecordLength);
         }
-        let [event, client, tx, amount] = self
-            .columns
-            .map(|index| self.record.get(index).unwrap_or(""));
-        let client = client.parse().map_err(|error| Type::InvalidField {
-            field: "client",
-            error: FieldError::Identifier(error),
-        })?;
-        let tx = tx.parse().map_err(|error| Type::InvalidField {
-            field: "tx",
-            error: FieldError::Identifier(error),
-        })?;
-        match event {
-            "deposit" | "withdrawal" => {
-                if amount.is_empty() {
-                    return Err(Type::InvalidField {
-                        field: "amount",
-                        error: FieldError::MissingAmount,
-                    });
-                }
-                let amount = amount.parse().map_err(|error| Type::InvalidField {
-                    field: "amount",
-                    error: FieldError::Amount(error),
-                })?;
-                let transaction_type = if event == "deposit" {
-                    TransactionType::Deposit
-                } else {
-                    TransactionType::Withdrawal
-                };
-                Ok(Request::Original {
-                    client,
-                    tx,
-                    transaction_type,
-                    amount,
-                })
-            }
-            "dispute" | "resolve" | "chargeback" => {
-                let action = match event {
-                    "dispute" => LifecycleAction::Dispute,
-                    "resolve" => LifecycleAction::Resolve,
-                    _ => LifecycleAction::Chargeback,
-                };
-                Ok(Request::Lifecycle { client, tx, action })
-            }
-            _ => Err(Type::InvalidField {
-                field: "type",
-                error: FieldError::UnknownType,
-            }),
-        }
+        let [transaction_type, client, tx, amount] =
+            self.columns.map(|index| self.record.get(index));
+        let row = Row {
+            transaction_type: transaction_type.unwrap_or(""),
+            client: client.unwrap_or(""),
+            tx: tx.unwrap_or(""),
+            amount,
+        };
+        Request::try_from(row).map_err(|error| Type::InvalidField {
+            field: error.field,
+            error: error.error,
+        })
     }
 }
 
@@ -146,14 +117,20 @@ impl<R: Read> Iterator for Input<R> {
                 None
             }
             Ok(true) => {
-                let context =
-                    self.context(self.record.position().unwrap_or(self.reader.position()));
+                let context = self.context();
+                let position =
+                    self.record_position(self.record.position().unwrap_or(self.reader.position()));
                 match self.parse() {
-                    Ok(request) => Some(Ok(Record { request, context })),
+                    Ok(request) => Some(Ok(Record {
+                        request,
+                        context,
+                        position,
+                    })),
                     Err(error_type) => {
                         self.finished = true;
                         Some(Err(InputError {
                             context,
+                            position,
                             error_type,
                         }))
                     }
@@ -162,7 +139,9 @@ impl<R: Read> Iterator for Input<R> {
             Err(error) => {
                 self.finished = true;
                 Some(Err(InputError {
-                    context: self.context(error.position().unwrap_or(self.reader.position())),
+                    context: self.context(),
+                    position: self
+                        .record_position(error.position().unwrap_or(self.reader.position())),
                     error_type: Type::Csv(error),
                 }))
             }
