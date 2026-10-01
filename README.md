@@ -115,6 +115,11 @@ failures may retain `report.partial.json`. A later artifact failure can occur
 after `accounts.csv` has been published; report filenames reflect the files that
 actually exist. Inputs and existing run directories are preserved.
 
+Account delivery handles short stdout writes. If delivery fails after writing a
+prefix, the invocation fails and retains the saved partial account file without
+publishing it as `accounts.csv`. Further writes are rejected to prevent cleanup
+from appending duplicate bytes; bytes already delivered to stdout remain visible.
+
 Business rejections and ignored requests do not fail a run. Argument, setup,
 parsing, fatal processing, trace, output, and artifact failures produce a nonzero
 exit status. See [fixture instructions](tests/fixtures/README.md) for more examples.
@@ -451,9 +456,12 @@ preserve joint partitions
 
 ### Invalid input stops processing
 
-Malformed headers, fields, CSV data, and reader failures stop the run rather than
-skipping rows that might affect later payments. Business rejections and ignored
-events continue. Headers are case-sensitive; LF and CRLF endings are supported,
+Input is assumed to be syntactically valid CSV representing a request payload.
+The CSV library handles transport syntax; the adapter does not implement a
+separate strict quote validator. Header and field validation failures, CSV errors
+reported by the library, and reader failures stop the run rather than skipping
+rows that might affect later payments. Business rejections and ignored events
+continue. Headers are case-sensitive; LF and CRLF endings are supported,
 but CR-only endings are outside the contract. Header-only input is valid; an
 empty file is rejected. Lifecycle rows may omit the final amount column.
 
@@ -484,8 +492,10 @@ cargo test --locked --doc
 cargo build --locked --release
 ```
 
-The current suite has 365 tests: 348 module tests and 17 executable integration
-tests. Coverage includes decimal/identifier boundaries, account atomicity,
+The current suite has **369 tests: 351 module tests and 18 executable integration
+tests**, counting each parameterized case as a test. Module tests exercise domain,
+manager, and adapter boundaries; executable tests exercise the compiled CLI.
+Coverage includes decimal/identifier boundaries, account atomicity,
 transaction transitions, ownership, replay/conflict handling, CSV conversion and
 output, trace delivery, single/batch execution, preflight isolation, cancellation,
 worker failures, and artifact reporting.
@@ -495,6 +505,50 @@ quoted fields, invalid input, and split reads. Batch cleanup tests inject failed
 worker starts and panicking trace finalization. Artifact tests check preservation
 of primary errors and report publication failures. Integration tests exercise the
 actual CLI and generated artifacts.
+
+### QA regression coverage
+
+- **Documented successful runs:** executable tests use `payments-a.csv` and
+  `payments-b.csv`, comparing stdout and persisted accounts with the checked-in
+  single/batch snapshots. Single counts are 10 applied, 1 replayed, 2 rejected,
+  and 1 ignored; batch counts are 14 applied, 2 replayed, 3 rejected, and 2 ignored.
+  Both have zero input and processing errors. Assertions cover every summary
+  counter, trace outcome classifications, source counts, final status, UUIDs,
+  source identities, filenames, locked accounts, and negative available balances
+  with held funds. CSV byte comparisons normalize line endings only.
+- **Invocation and input failures:** the default one-argument invocation checks
+  account output and `output/<run-id>/` artifacts. Invalid payload tests check
+  failed reports, empty stdout, retained partial accounts, and no completed
+  account file. A valid deposit followed by invalid input retains its applied
+  count and stops before processing subsequent records. Library-reported CSV
+  errors and underlying reader failures retain provenance and terminate input;
+  strict malformed-quote rejection is outside the valid-CSV assumption.
+- **Batch failures:** preflight tests verify zero processing, no source traces,
+  and retained partial artifacts. Worker-failure tests verify source states and
+  that aggregate counters equal source-counter sums. CLI assertions allow peers
+  to complete or be cancelled according to available parallelism; manager tests
+  use explicit worker limits to assert exact cancellation counts. Both existing
+  concurrency tests and orchestration fault tests remain covered.
+- **Financial sequences:** manager tests verify that held funds cannot finance
+  a withdrawal, a rejected original has no accepted transaction, and replay after
+  resolution preserves the rejection despite newly available funds. A fresh
+  withdrawal ID succeeds. Another sequence verifies recovery from negative
+  available funds through a later deposit, preserving held funds until resolution
+  and ending with available 10, held 0, total 10, and an unlocked account.
+  Rejected and replayed steps preserve account and original-record state.
+- **Artifact failures:** isolated filesystem and injected-writer tests cover an
+  output root that is a regular file, an existing run directory with sentinel
+  files, short writes, stdout failure after a prefix, and account publication
+  colliding with an existing directory. They verify error propagation, file
+  preservation, partial accounts, failed reports, and accurate report filenames.
+  CLI subprocesses run inside their temporary fixture directories.
+
+Two redundant module tests were removed while retaining parameterized UTF-8
+provenance/termination coverage and the lifecycle transition matrix and resolution
+round trip. Precision tests use literal scaled-unit expectations for an integer,
+a four-place fraction, and the smallest positive unit rather than comparing two
+parser results. Tests protecting distinct domain, manager, adapter, and executable
+boundaries remain separate; the suite has no numeric test-count target.
 
 Account and transaction candidates are validated before committing either.
 Checked arithmetic detects overflow, and failures preserve earlier financial
@@ -633,6 +687,9 @@ an APM trace ID. Per-payment spans would require a separate volume policy.
 - CSV processing currently accepts CLI configuration types; further decoupling
   is deferred until another transport is introduced.
 - Automated CI and external observability integrations are outside this scope.
+- Model-based testing, load benchmarks, and broader exploratory regression
+  coverage remain deferred. The current QA changes preserve financial policy,
+  public signatures, report schemas, and dependencies.
 
 ## 6. Sample generator script usage
 

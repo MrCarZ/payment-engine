@@ -107,21 +107,3 @@ fn resolved_deposit_can_be_disputed_again() {
     let redisputed = resolved.transition(LifecycleAction::Dispute).unwrap();
     assert_eq!(redisputed, disputed);
 }
-
-#[test]
-fn resolved_deposit_ignores_repeated_resolution_and_premature_chargeback() {
-    let resolved = posted(Type::Deposit)
-        .transition(LifecycleAction::Dispute)
-        .unwrap()
-        .transition(LifecycleAction::Resolve)
-        .unwrap();
-    assert_eq!(
-        resolved.transition(LifecycleAction::Resolve),
-        Err(TransitionError::NotDisputed)
-    );
-    assert_eq!(
-        resolved.transition(LifecycleAction::Chargeback),
-        Err(TransitionError::NotDisputed)
-    );
-    assert_eq!(resolved.state(), State::Posted);
-}

@@ -37,6 +37,7 @@ impl Write for CollisionWriter {
     fn flush(&mut self) -> IoResult<()> {
         if !self.created {
             create_dir(&self.path)?;
+            write(self.path.join("sentinel"), b"preserve collision")?;
             self.created = true;
         }
         Ok(())
@@ -125,4 +126,158 @@ fn trace_discovery_failure_preserves_the_primary_error() {
     assert!(matches!(error, ArtifactError::Additional { .. }));
     assert!(error.to_string().contains("primary processing failure"));
     assert!(error.to_string().contains("trace discovery failed"));
+}
+
+fn fixture_invocation(fixture: &Directory) -> Invocation {
+    let input = fixture.0.join("input.csv");
+    write(&input, "type,client,tx,amount\ndeposit,1,1,1\n").unwrap();
+    Invocation {
+        config: Config::Single(InputConfig { input_path: input }),
+        output_root: fixture.0.join("output"),
+    }
+}
+
+#[test]
+fn output_root_file_is_preserved_and_setup_writes_no_account_output() {
+    let fixture = Directory::new();
+    let invocation = fixture_invocation(&fixture);
+    write(&invocation.output_root, b"preserve output root").unwrap();
+    let mut output = Vec::new();
+    let error = run(invocation, &mut output, "run".into()).unwrap_err();
+    assert!(error.to_string().contains("create run directory"));
+    assert!(output.is_empty());
+    assert_eq!(
+        read(fixture.0.join("output")).unwrap(),
+        b"preserve output root"
+    );
+    assert_eq!(std::fs::read_dir(&fixture.0).unwrap().count(), 2);
+}
+
+#[test]
+fn existing_run_directory_preserves_artifacts_and_writes_no_account_output() {
+    let fixture = Directory::new();
+    let invocation = fixture_invocation(&fixture);
+    create_dir(&invocation.output_root).unwrap();
+    let directory = invocation.output_root.join("run");
+    create_dir(&directory).unwrap();
+    let sentinel = directory.join("accounts.partial.csv");
+    write(&sentinel, b"existing artifact").unwrap();
+    let mut output = Vec::new();
+    let error = run(invocation, &mut output, "run".into()).unwrap_err();
+    assert!(error.to_string().contains("create run directory"));
+    assert!(output.is_empty());
+    assert_eq!(read(sentinel).unwrap(), b"existing artifact");
+    assert_eq!(std::fs::read_dir(directory).unwrap().count(), 1);
+}
+
+struct ShortWriter {
+    bytes: Vec<u8>,
+    writes: usize,
+    fail_after: Option<usize>,
+}
+impl Write for ShortWriter {
+    fn write(&mut self, bytes: &[u8]) -> IoResult<usize> {
+        let remaining = self
+            .fail_after
+            .map_or(usize::MAX, |limit| limit.saturating_sub(self.bytes.len()));
+        if remaining == 0 {
+            return Err(IoError::other("stdout failed after prefix"));
+        }
+        let count = bytes.len().min(3).min(remaining);
+        self.bytes.extend_from_slice(&bytes[..count]);
+        self.writes += 1;
+        Ok(count)
+    }
+    fn flush(&mut self) -> IoResult<()> {
+        Ok(())
+    }
+}
+
+const SINGLE_ACCOUNT: &[u8] = b"client,available,held,total,locked\n1,1.0000,0.0000,1.0000,false\n";
+
+#[test]
+fn tee_short_writes_deliver_complete_stdout_and_matching_saved_accounts() {
+    let fixture = Directory::new();
+    let mut output = ShortWriter {
+        bytes: Vec::new(),
+        writes: 0,
+        fail_after: None,
+    };
+    let execution = run(fixture_invocation(&fixture), &mut output, "run".into()).unwrap();
+    assert_eq!(output.bytes, SINGLE_ACCOUNT);
+    assert!(output.writes > 1);
+    assert_eq!(
+        read(execution.directory.join("accounts.csv")).unwrap(),
+        output.bytes
+    );
+    assert!(!execution.directory.join("accounts.partial.csv").exists());
+    let report: Value =
+        from_slice(&read(execution.directory.join("report.json")).unwrap()).unwrap();
+    assert_eq!(report["status"], "completed");
+    assert_eq!(report["exit_code"], 0);
+    assert_eq!(report["account_file"], "accounts.csv");
+    assert!(report["partial_account_file"].is_null());
+    assert_eq!(report["summary"]["applied"], 1);
+}
+
+#[test]
+fn tee_stdout_failure_retains_partial_accounts_and_reports_failed_publication() {
+    let fixture = Directory::new();
+    let mut output = ShortWriter {
+        bytes: Vec::new(),
+        writes: 0,
+        fail_after: Some(7),
+    };
+    let error = run(fixture_invocation(&fixture), &mut output, "run".into()).unwrap_err();
+    assert!(error.to_string().contains("stdout failed after prefix"));
+    assert_eq!(output.bytes, &SINGLE_ACCOUNT[..7]);
+    assert!(output.writes > 1);
+    let directory = fixture.0.join("output/run");
+    assert_eq!(
+        read(directory.join("accounts.partial.csv")).unwrap(),
+        SINGLE_ACCOUNT
+    );
+    assert!(!directory.join("accounts.csv").exists());
+    let report: Value = from_slice(&read(directory.join("report.json")).unwrap()).unwrap();
+    assert_eq!(report["status"], "failed");
+    assert_eq!(report["exit_code"], 1);
+    assert!(report["account_file"].is_null());
+    assert_eq!(report["partial_account_file"], "accounts.partial.csv");
+    assert_eq!(report["summary"]["applied"], 1);
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("stdout failed after prefix")
+    );
+    assert!(directory.join("diagnostics.log").is_file());
+}
+
+#[test]
+fn accounts_publication_collision_preserves_directory_and_reports_partial_filename() {
+    let fixture = Directory::new();
+    let directory = fixture.0.join("output/run");
+    let writer = CollisionWriter {
+        path: directory.join("accounts.csv"),
+        created: false,
+    };
+    let error = run(fixture_invocation(&fixture), writer, "run".into()).unwrap_err();
+    assert!(matches!(error, ArtifactError::Run { .. }));
+    assert!(error.to_string().contains("artifact I/O"));
+    assert!(directory.join("accounts.csv").is_dir());
+    assert_eq!(
+        read(directory.join("accounts.csv/sentinel")).unwrap(),
+        b"preserve collision"
+    );
+    assert_eq!(
+        read(directory.join("accounts.partial.csv")).unwrap(),
+        SINGLE_ACCOUNT
+    );
+    let report: Value = from_slice(&read(directory.join("report.json")).unwrap()).unwrap();
+    assert_eq!(report["status"], "failed");
+    assert_eq!(report["exit_code"], 1);
+    assert!(report["account_file"].is_null());
+    assert_eq!(report["partial_account_file"], "accounts.partial.csv");
+    assert_eq!(report["summary"]["applied"], 1);
+    assert!(report["error"].as_str().unwrap().contains("artifact I/O"));
 }

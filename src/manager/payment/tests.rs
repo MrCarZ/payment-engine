@@ -458,3 +458,63 @@ fn lifecycle_references_are_not_original_replays() {
     assert!(!ignored.is_replay());
     assert_balances(&manager, 1, "0", "2", "2", false);
 }
+
+#[test]
+fn held_funds_rejection_is_retained_and_replayed_after_resolution() {
+    let mut manager = PaymentManager::new();
+    apply(&mut manager, original(1, 1, Type::Deposit, "10"));
+    apply(&mut manager, lifecycle(1, 1, LifecycleAction::Dispute));
+    let withdrawal = original(1, 2, Type::Withdrawal, "1");
+    let rejected = Outcome::Rejected(Reason::InsufficientAvailableFunds);
+    let accounts = manager.accounts.clone();
+    let deposit = manager.original(TransactionId::from(1)).unwrap().clone();
+    assert_eq!(manager.process(withdrawal), Ok(processed(rejected)));
+    assert_eq!(manager.accounts, accounts);
+    assert_eq!(manager.original(TransactionId::from(1)), Some(&deposit));
+    let record = manager.original(TransactionId::from(2)).unwrap();
+    assert_eq!(record.request(), withdrawal);
+    assert_eq!(record.outcome(), rejected);
+    assert!(record.transaction().is_none());
+    assert_balances(&manager, 1, "0", "10", "10", false);
+
+    apply(&mut manager, lifecycle(1, 1, LifecycleAction::Resolve));
+    let accounts = manager.accounts.clone();
+    let originals = manager.originals.clone();
+    let replay = manager.process(withdrawal).unwrap();
+    assert_eq!(replay.outcome(), rejected);
+    assert!(replay.is_replay());
+    assert_eq!(manager.accounts, accounts);
+    assert_eq!(manager.originals, originals);
+    assert_balances(&manager, 1, "10", "0", "10", false);
+    apply(&mut manager, original(1, 3, Type::Withdrawal, "1"));
+    assert_balances(&manager, 1, "9", "0", "9", false);
+}
+
+#[test]
+fn later_deposit_recovers_negative_available_without_releasing_held_funds() {
+    let mut manager = PaymentManager::new();
+    apply(&mut manager, original(1, 1, Type::Deposit, "10"));
+    assert_balances(&manager, 1, "10", "0", "10", false);
+    apply(&mut manager, original(1, 2, Type::Withdrawal, "8"));
+    assert_balances(&manager, 1, "2", "0", "2", false);
+    apply(&mut manager, lifecycle(1, 1, LifecycleAction::Dispute));
+    assert_balances(&manager, 1, "-8", "10", "2", false);
+    let disputed = manager.original(TransactionId::from(1)).unwrap().clone();
+    apply(&mut manager, original(1, 3, Type::Deposit, "9"));
+    assert_balances(&manager, 1, "1", "10", "11", false);
+    assert_eq!(manager.original(TransactionId::from(1)), Some(&disputed));
+    apply(&mut manager, original(1, 4, Type::Withdrawal, "1"));
+    assert_balances(&manager, 1, "0", "10", "10", false);
+    assert_eq!(manager.original(TransactionId::from(1)), Some(&disputed));
+    apply(&mut manager, lifecycle(1, 1, LifecycleAction::Resolve));
+    assert_balances(&manager, 1, "10", "0", "10", false);
+    assert_eq!(
+        manager
+            .original(TransactionId::from(1))
+            .unwrap()
+            .transaction()
+            .unwrap()
+            .state(),
+        State::Posted
+    );
+}

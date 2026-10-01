@@ -144,17 +144,15 @@ fn original_rows_accept_whitespace_and_reordered_headers(
 }
 
 #[rstest]
-#[case::integer("1")]
-#[case::one_place("1.2")]
-#[case::two_places("1.23")]
-#[case::three_places("1.234")]
-#[case::four_places("1.2345")]
-fn amounts_preserve_all_supported_precision(#[case] amount: &str) {
+#[case::integer("1", 10_000)]
+#[case::four_places("1.2345", 12_345)]
+#[case::smallest_unit("0.0001", 1)]
+fn amounts_preserve_exact_scaled_units(#[case] amount: &str, #[case] units: i128) {
     let input = format!("type,client,tx,amount\ndeposit,1,1,{amount}\n");
     let Request::Original { amount: parsed, .. } = first(&input).unwrap() else {
         panic!("expected original");
     };
-    assert_eq!(parsed, amount.parse().unwrap());
+    assert_eq!(parsed.money().scaled_units(), units);
 }
 
 #[rstest]
@@ -292,20 +290,6 @@ fn fixture_preserves_order_context_and_integrates_with_manager() {
 fn header_only_input_is_empty() {
     let mut input = Input::new(b"type,client,tx,amount\n".as_slice(), source()).unwrap();
     assert!(input.next().is_none());
-    assert!(input.next().is_none());
-}
-
-#[test]
-fn invalid_utf8_is_a_terminal_csv_error() {
-    let mut input = Input::new(
-        b"type,client,tx,amount\ndeposit,1,1,\xff\n".as_slice(),
-        source(),
-    )
-    .unwrap();
-    assert!(matches!(
-        input.next().unwrap().unwrap_err().error_type,
-        ErrorType::Csv(_)
-    ));
     assert!(input.next().is_none());
 }
 

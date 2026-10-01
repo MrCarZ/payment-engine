@@ -180,6 +180,38 @@ fn failed_source_prevents_publication_and_skips_later_groups(
     ));
     assert_eq!(error.report.sources[1].summary.applied, peer_applied);
     assert_eq!(error.report.sources[2].summary.applied, 0);
+    assert_eq!(error.report.sources.len(), 3);
+    assert_eq!(error.report.sources[0].state, State::Failed);
+    assert_eq!(
+        error.report.sources[1].state,
+        if workers == 1 {
+            State::Failed
+        } else {
+            State::Completed
+        }
+    );
+    assert_eq!(error.report.sources[2].state, State::Failed);
+    let cancelled = error
+        .report
+        .sources
+        .iter()
+        .filter(|source| {
+            matches!(
+                source.error.as_ref().map(|error| error.failure.as_ref()),
+                Some(SourceFailure::Cancelled)
+            )
+        })
+        .count();
+    assert_eq!(cancelled, if workers == 1 { 2 } else { 1 });
+    assert_eq!(
+        error.report.summary.applied,
+        error
+            .report
+            .sources
+            .iter()
+            .map(|source| source.summary.applied)
+            .sum::<u64>()
+    );
 }
 
 #[rstest]

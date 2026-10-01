@@ -1,7 +1,7 @@
 //! Filesystem operations for run artifacts, without payment processing policy.
 use std::{
     fs::{File, OpenOptions, create_dir, create_dir_all, read_dir, rename},
-    io::{BufWriter, Result as IoResult, Write},
+    io::{BufWriter, Error as IoError, Result as IoResult, Write},
     path::{Path, PathBuf},
 };
 
@@ -35,19 +35,32 @@ pub fn file_name(path: &Path) -> String {
 pub struct Tee<W> {
     file: BufWriter<File>,
     output: W,
+    write_failed: bool,
 }
 impl<W> Tee<W> {
     pub fn new(path: &Path, output: W) -> IoResult<Self> {
         Ok(Self {
             file: BufWriter::new(create_file(path)?),
             output,
+            write_failed: false,
         })
     }
 }
 impl<W: Write> Write for Tee<W> {
     fn write(&mut self, bytes: &[u8]) -> IoResult<usize> {
-        self.file.write_all(bytes)?;
-        self.output.write_all(bytes)?;
+        // CSV writer cleanup may retry flushing after an error. A failed Tee
+        // must not append those bytes again or retry delivery to stdout.
+        if self.write_failed {
+            return Err(IoError::other("account output already failed"));
+        }
+        if let Err(error) = self
+            .file
+            .write_all(bytes)
+            .and_then(|()| self.output.write_all(bytes))
+        {
+            self.write_failed = true;
+            return Err(error);
+        }
         Ok(bytes.len())
     }
     fn flush(&mut self) -> IoResult<()> {

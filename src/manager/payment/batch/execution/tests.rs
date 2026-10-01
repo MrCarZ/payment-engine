@@ -142,6 +142,24 @@ fn failure_suppresses_publication_and_cancels_later_non_csv_sources() {
     assert_eq!(error.report.summary.applied, 1);
     assert_eq!(error.report.summary.processing_errors, 1);
     assert_eq!(output.calls, 0);
+    assert_eq!(error.report.sources.len(), 2);
+    assert_eq!(error.report.sources[0].state, State::Failed);
+    assert_eq!(error.report.sources[0].summary.applied, 1);
+    assert_eq!(error.report.sources[0].summary.processing_errors, 1);
+    assert_eq!(error.report.sources[1].state, State::Failed);
+    assert_eq!(error.report.sources[1].summary, Default::default());
+    assert_eq!(
+        error
+            .report
+            .sources
+            .iter()
+            .filter(|source| matches!(
+                source.error.as_ref().map(|error| error.failure.as_ref()),
+                Some(RunFailure::Cancelled)
+            ))
+            .count(),
+        1
+    );
     assert!(matches!(
         *error.report.sources[1].error.as_ref().unwrap().failure,
         RunFailure::Cancelled
