@@ -2,7 +2,7 @@
 
 A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
-## Current status: Phase 6
+## Current status: Phase 7
 
 The crate and component boundaries are established. The binary validates exactly
 one input-path argument. It does not open files or process payments yet. A valid
@@ -36,7 +36,7 @@ resolution returns them to posted, and chargeback is terminal. Repeated or
 inapplicable actions return typed transition errors. `transition` returns a new
 candidate without mutating the original or touching balances. The payment manager verifies ownership and commits account and transaction changes
 together. Rejected originals must not be constructed as posted transactions. The public
-`domain::transaction` module scopes the `State` and `Type` enums; consumers import
+`domain::payment::transaction` module scopes the `State` and `Type` enums; consumers import
 them directly or alias them when other domain types would conflict.
 
 `manager::payment` exposes `PaymentManager`, scoped `Request`,
@@ -57,6 +57,20 @@ rejected withdrawal stays rejected after later deposits. Valid business outcomes
 reserve original IDs; fatal arithmetic failures do not. Replay detection applies
 only to originals, while repeated lifecycle events follow their state rules.
 
+`adapters::csv::input::Input` streams any `Read` source into requests plus processing
+context. It reuses a row buffer, preserves input order, and stops permanently after
+yielding the first parse or read error. The caller supplies run/source/optional
+partner IDs; context also includes record index (header is zero), line, and byte
+offset. Source metadata is shared between records rather than copied per row.
+
+Headers must contain exactly `type`, `client`, `tx`, and `amount`, each once, in any
+order. Surrounding field whitespace is trimmed. Monetary rows require positive
+amounts; lifecycle rows ignore their amount field and may omit it when it is the
+final column. Other field-count mismatches are rejected. Parsing failures identify
+the source, position, and invalid field without including the raw row. A header-only
+input is valid; an empty file is rejected for missing headers. The CLI is not yet
+wired to this adapter; that integration belongs to Phase 11.
+
 ```sh
 cargo build
 cargo run -- transactions.csv
@@ -70,7 +84,7 @@ Domain modules with unit tests use a directory named after the module, containin
 under `cfg(test)`. Parameterized cases use `rstest` as a development dependency;
 CLI integration tests stay in the top-level `tests` directory.
 
-- `domain`: financial types and invariants; no CSV or tracing dependencies.
+- `domain/payment`: payment types and invariants; no CSV or tracing dependencies.
 - `manager`: payment requests and coordination of domain operations.
 - `adapters`: external input/output formats.
 - `observability`: generic structured trace delivery.
@@ -91,3 +105,6 @@ errors live in `request.rs` and `error.rs`, re-exported through the payment modu
 Module-local errors for accounts, money, transaction transitions, and runtime
 arguments live in each module's `error.rs`, re-exported through its `mod.rs`.
 Identifier parsing retains the standard library `ParseIntError`.
+
+Payment domain modules are grouped under `domain/payment`, matching the
+`manager/payment` boundary. Consumers import payment types from `domain::payment`.

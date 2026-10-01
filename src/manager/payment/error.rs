@@ -3,7 +3,7 @@ use std::{
     fmt::{Display, Formatter, Result as FmtResult},
 };
 
-use crate::domain::{AccountError, MoneyError};
+use crate::domain::payment::{AccountError, MoneyError};
 
 /// Fatal processing failures, distinct from normal business outcomes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

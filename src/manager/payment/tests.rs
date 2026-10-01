@@ -1,7 +1,7 @@
 use rstest::rstest;
 
 use super::{Outcome, PaymentManager, ProcessingError, Reason, Report, Request};
-use crate::domain::{
+use crate::domain::payment::{
     Account, ClientId, LifecycleAction, Money, MoneyError, TransactionId,
     transaction::{State, Type},
 };

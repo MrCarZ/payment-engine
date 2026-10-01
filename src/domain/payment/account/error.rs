@@ -3,7 +3,7 @@ use std::{
     fmt::{Display, Formatter, Result as FmtResult},
 };
 
-use crate::domain::MoneyError;
+use crate::domain::payment::MoneyError;
 
 /// Business restrictions are separate from financial arithmetic failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

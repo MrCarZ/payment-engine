@@ -1,7 +1,7 @@
 use rstest::rstest;
 
 use super::{LifecycleAction, State, Transaction, TransitionError, Type};
-use crate::domain::{ClientId, TransactionId};
+use crate::domain::payment::{ClientId, TransactionId};
 
 fn posted(transaction_type: Type) -> Transaction {
     Transaction::posted(

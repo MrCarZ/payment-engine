@@ -1,7 +1,7 @@
 use rstest::rstest;
 
 use super::{Account, AccountError};
-use crate::domain::{Money, MoneyError, PositiveAmount};
+use crate::domain::payment::{Money, MoneyError, PositiveAmount};
 
 fn amount(value: &str) -> PositiveAmount {
     value.parse().expect("positive amount")

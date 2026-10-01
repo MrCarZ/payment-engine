@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 
-use crate::domain::{
+use crate::domain::payment::{
     Account, AccountError, ClientId, LifecycleAction, PositiveAmount, Transaction, TransactionId,
     TransitionError, transaction::Type,
 };
 
+mod context;
 mod error;
 mod request;
 
+pub use context::{Context, RecordPosition, SourceContext};
 pub use error::ProcessingError;
 pub use request::Request;
 
