@@ -3,7 +3,7 @@
 use std::{
     fs::{File, OpenOptions, read_dir, rename},
     io::{BufWriter, Result as IoResult, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Instant,
 };
 
@@ -115,10 +115,10 @@ pub fn execute(invocation: Invocation, output: impl Write) -> Result<Execution, 
         "exit_code": if result.is_ok() { 0 } else { 1 },
         "status": if result.is_ok() { "completed" } else { "failed" },
         "elapsed_seconds": started.elapsed().as_secs_f64(),
-        "input_paths": input_paths.iter().map(|path| path.to_string_lossy().into_owned()).collect::<Vec<_>>(),
-        "accounts_path": if result.is_ok() { Some(accounts.to_string_lossy().into_owned()) } else { None },
-        "partial_accounts_path": if result.is_err() { Some(partial.to_string_lossy().into_owned()) } else { None },
-        "trace_paths": traces.iter().map(|path| path.to_string_lossy().into_owned()).collect::<Vec<_>>(),
+        "input_files": input_paths.iter().map(|path| file_name(path)).collect::<Vec<_>>(),
+        "account_file": if result.is_ok() { Some(file_name(&accounts)) } else { None },
+        "partial_account_file": if result.is_err() { Some(file_name(&partial)) } else { None },
+        "trace_files": traces.iter().map(|path| file_name(path)).collect::<Vec<_>>(),
         "summary": summary_value(summary),
         "sources": sources,
         "error": result.as_ref().err().map(ToString::to_string),
@@ -183,4 +183,11 @@ fn source_reports(sources: &[SourceReport]) -> Value {
 
 fn summary_value(summary: Summary) -> Value {
     json!({ "applied": summary.applied, "ignored": summary.ignored, "rejected": summary.rejected, "replayed": summary.replayed, "input_errors": summary.input_errors, "processing_errors": summary.processing_errors })
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
 }

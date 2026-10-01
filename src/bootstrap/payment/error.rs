@@ -82,7 +82,11 @@ impl Display for Failure {
                 operation,
                 path,
                 error,
-            } => write!(f, "cannot {operation} {}: {error}", path.display()),
+            } => write!(
+                f,
+                "cannot {operation} {}: {error}",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            ),
             Self::Input(error) => write!(f, "input failed: {error}"),
             Self::Processing {
                 context,
@@ -145,7 +149,11 @@ impl Display for RunError {
             write!(f, "; additionally: {error}")?;
         }
         if let Some(path) = &self.trace_path {
-            write!(f, "; trace log: {}", path.display())?;
+            write!(
+                f,
+                "; trace log: {}",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            )?;
         }
         Ok(())
     }

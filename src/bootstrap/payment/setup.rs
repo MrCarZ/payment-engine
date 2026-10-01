@@ -5,6 +5,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use uuid::Uuid;
+
 use crate::{
     adapters::{clock::SystemClock, observability::csv::CsvTraceService},
     bootstrap::config::InputConfig,
@@ -43,10 +45,20 @@ pub(super) fn prepare(
             Summary::default(),
         )
     })?;
+    let canonical = config.input_path.canonicalize().map_err(|error| {
+        RunError::new(
+            Failure::File {
+                operation: "identify input",
+                path: config.input_path.clone(),
+                error,
+            },
+            Summary::default(),
+        )
+    })?;
     let (trace, trace_path) = create_trace(directory, 1)?;
     let source = SourceContext {
         run_id: run_id.into(),
-        source_id: config.input_path.to_string_lossy().into_owned(),
+        source_id: source_id(&canonical),
         partner_id: None,
     };
     Ok(Resources {
@@ -55,6 +67,16 @@ pub(super) fn prepare(
         source,
         trace_path,
     })
+}
+
+/// Derives a stable identity from a canonical native path without publishing it.
+/// Native encoding preserves non-Unicode paths; identities are platform-local.
+pub(crate) fn source_id(canonical: &Path) -> String {
+    Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        canonical.as_os_str().as_encoded_bytes(),
+    )
+    .to_string()
 }
 
 /// Creates an execution identity for source traces and output directories.

@@ -19,7 +19,7 @@ use crate::{
         config::BatchConfig,
         payment::{
             Failure as SourceFailure, RunError, finish_as,
-            setup::{create_run_directory, create_trace, new_run_id},
+            setup::{create_run_directory, create_trace, new_run_id, source_id},
         },
     },
     manager::{
@@ -111,7 +111,7 @@ pub(crate) fn execute_at(
                 Summary::default(),
             )))
         })?;
-        let source_id = canonical.to_string_lossy().into_owned();
+        let source_id = source_id(&canonical);
         paths.insert(source_id.clone(), inputs.len() + 1);
         inputs.push((
             input,

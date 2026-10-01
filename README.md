@@ -338,3 +338,11 @@ cargo run -- --output-dir output first.csv second.csv
 Every invocation creates a new run subdirectory, including failed batch preflight
 runs once output storage is initialized. The output directory and trace paths are
 printed to stderr. No program logs or traces are written beside input CSVs.
+
+## Source identity and report references
+
+CLI source IDs are UUID v5 values derived from canonical native path bytes using
+the URL namespace. Single and batch execution share this identity scheme; native
+encoding preserves non-Unicode paths and identities are platform-local. Reports
+use `input_files`, `account_file`, `partial_account_file`, and `trace_files` with
+basenames only. File error descriptions in reports also omit full paths.

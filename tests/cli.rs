@@ -10,6 +10,7 @@ use std::{
 use csv::Reader;
 use rstest::rstest;
 use serde_json::{Value, from_str};
+use uuid::Uuid;
 
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -130,7 +131,21 @@ fn successful_cli_outputs_accounts_and_creates_a_separate_csv_trace() {
     let report: Value =
         from_str(&String::from_utf8(read(run.join("report.json")).unwrap()).unwrap()).unwrap();
     assert_eq!(report["status"], "completed");
+    let run_id = report["run_id"].as_str().unwrap();
+    assert_eq!(run.file_name().unwrap().to_str().unwrap(), run_id);
     assert_eq!(report["summary"]["applied"], 5);
+    assert_eq!(report["account_file"], "accounts.csv");
+    assert!(report["partial_account_file"].is_null());
+    assert_eq!(report["trace_files"][0], "source-0001.trace.csv");
+    assert_eq!(report["input_files"][0], "payments with spaces.csv");
+    for field in [
+        "accounts_path",
+        "partial_accounts_path",
+        "trace_paths",
+        "input_paths",
+    ] {
+        assert!(report.get(field).is_none());
+    }
     assert!(run.join("diagnostics.log").exists());
     assert!(!read_dir(&fixture.directory).unwrap().any(|entry| {
         entry
@@ -158,7 +173,23 @@ fn successful_cli_outputs_accounts_and_creates_a_separate_csv_trace() {
     assert_eq!(&records[5][3], "payment.run_finished");
     let attributes: Value = from_str(&records[5][6]).unwrap();
     assert_eq!(attributes["status"], "completed");
+    for record in &records {
+        assert_eq!(&record[4], run_id);
+        let attributes: Value = from_str(&record[6]).unwrap();
+        assert_eq!(attributes["run_id"], run_id);
+    }
     assert_eq!(attributes["applied"], 5);
+    let canonical = fixture.input.canonicalize().unwrap();
+    let expected_id = Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        canonical.as_os_str().as_encoded_bytes(),
+    );
+    assert_eq!(attributes["source_id"], expected_id.to_string());
+    assert_eq!(expected_id.get_version_num(), 5);
+    for record in &records {
+        let attributes: Value = from_str(&record[6]).unwrap();
+        assert_eq!(attributes["source_id"], expected_id.to_string());
+    }
     assert!(String::from_utf8_lossy(&output.stderr).contains("Trace log:"));
 }
 
@@ -174,6 +205,21 @@ fn repeated_invocations_preserve_existing_traces_and_input() {
     assert_eq!(fixture.runs().len(), 2);
     assert_eq!(read(original_path).unwrap(), original);
     assert_eq!(read(&fixture.input).unwrap(), csv.as_bytes());
+    let source_ids: Vec<_> = fixture
+        .traces()
+        .iter()
+        .map(|path| {
+            let bytes = read(path).unwrap();
+            let record = Reader::from_reader(bytes.as_slice())
+                .records()
+                .next()
+                .unwrap()
+                .unwrap();
+            let attributes: Value = from_str(&record[6]).unwrap();
+            attributes["source_id"].as_str().unwrap().to_owned()
+        })
+        .collect();
+    assert_eq!(source_ids[0], source_ids[1]);
 }
 
 #[rstest]
@@ -235,6 +281,7 @@ fn cli_processes_disjoint_csvs_with_shared_run_identity_and_separate_traces() {
     let traces = fixture.traces();
     assert_eq!(traces.len(), 2);
     let mut run_ids = Vec::new();
+    let mut source_ids = Vec::new();
     let mut applied = 0;
     for path in traces {
         let bytes = read(path).unwrap();
@@ -248,9 +295,47 @@ fn cli_processes_disjoint_csvs_with_shared_run_identity_and_separate_traces() {
         assert_eq!(attributes["status"], "completed");
         applied += attributes["applied"].as_u64().unwrap();
         run_ids.push(summary[4].to_owned());
+        let source_id = attributes["source_id"].as_str().unwrap();
+        assert_eq!(Uuid::parse_str(source_id).unwrap().get_version_num(), 5);
+        source_ids.push(source_id.to_owned());
     }
     assert_eq!(applied, 6);
     assert_eq!(run_ids[0], run_ids[1]);
+    assert_ne!(source_ids[0], source_ids[1]);
+    let mut expected_ids: Vec<_> = [&fixture.input, &other]
+        .iter()
+        .map(|path| {
+            let canonical = path.canonicalize().unwrap();
+            Uuid::new_v5(
+                &Uuid::NAMESPACE_URL,
+                canonical.as_os_str().as_encoded_bytes(),
+            )
+            .to_string()
+        })
+        .collect();
+    expected_ids.sort();
+    source_ids.sort();
+    assert_eq!(source_ids, expected_ids);
+    let run = fixture.runs().pop().unwrap();
+    let report: Value =
+        from_str(&String::from_utf8(read(run.join("report.json")).unwrap()).unwrap()).unwrap();
+    assert_eq!(
+        report["trace_files"],
+        from_str::<Value>(r#"["source-0001.trace.csv","source-0002.trace.csv"]"#).unwrap()
+    );
+    assert_eq!(
+        report["sources"][0]["source_id"],
+        Uuid::new_v5(
+            &Uuid::NAMESPACE_URL,
+            fixture
+                .input
+                .canonicalize()
+                .unwrap()
+                .as_os_str()
+                .as_encoded_bytes()
+        )
+        .to_string()
+    );
     assert_eq!(
         String::from_utf8_lossy(&output.stderr)
             .matches("Trace log:")
@@ -306,6 +391,14 @@ fn duplicate_batch_input_is_rejected_before_trace_setup() {
         from_str(&String::from_utf8(read(run.join("report.json")).unwrap()).unwrap()).unwrap();
     assert_eq!(report["status"], "failed");
     assert_eq!(report["summary"]["applied"], 0);
+    assert!(report["account_file"].is_null());
+    assert_eq!(report["partial_account_file"], "accounts.partial.csv");
+    assert!(
+        !report["error"]
+            .as_str()
+            .unwrap()
+            .contains(&fixture.directory.to_string_lossy().into_owned())
+    );
     assert!(
         report["error"]
             .as_str()
