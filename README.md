@@ -63,6 +63,9 @@ context. It reuses a row buffer, preserves input order, and stops permanently af
 yielding the first parse or read error. The caller supplies run/source/optional
 partner IDs through transport-independent processing context. CSV records and
 errors separately carry record index (header is zero), line, and byte offset.
+LF and CRLF record endings are supported. Positions refer to the original input
+bytes, with one-based physical lines (including newlines inside quoted fields)
+and zero-based byte offsets. CR-only record endings are not supported.
 Source metadata is shared between records rather than copied per row.
 
 Headers must contain exactly `type`, `client`, `tx`, and `amount`, each once, in any

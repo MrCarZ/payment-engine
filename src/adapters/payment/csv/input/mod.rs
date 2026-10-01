@@ -1,6 +1,6 @@
 use std::{io::Read, iter::FusedIterator, sync::Arc};
 
-use csv::{Position as CsvPosition, Reader, ReaderBuilder, StringRecord, Trim};
+use csv::{Position as CsvPosition, Reader, ReaderBuilder, StringRecord, Terminator, Trim};
 
 use crate::manager::payment::{Context, Request, SourceContext};
 
@@ -31,6 +31,10 @@ impl<R: Read> Input<R> {
     pub fn new(input: R, source: SourceContext) -> Result<Self, InputError> {
         let mut input = Self {
             reader: ReaderBuilder::new()
+                // Consume the complete LF/CRLF ending before recording the next
+                // position. The default terminator returns at CR, leaving LF
+                // attributed to the following record. Trim removes trailing CR.
+                .terminator(Terminator::Any(b'\n'))
                 .trim(Trim::All)
                 .flexible(true)
                 .from_reader(input),

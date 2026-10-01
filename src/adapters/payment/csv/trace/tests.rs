@@ -64,7 +64,9 @@ fn malformed_input_has_safe_classification(
     #[case] csv: &str,
     #[case] code: &str,
     #[case] field: Option<&str>,
+    #[values("\n", "\r\n")] newline: &str,
 ) {
+    let csv = csv.replace('\n', newline);
     let error = match Input::new(csv.as_bytes(), source()) {
         Err(error) => error,
         Ok(mut input) => input.next().unwrap().unwrap_err(),
@@ -83,6 +85,15 @@ fn malformed_input_has_safe_classification(
     assert_eq!(event.attributes["record"], error.position.record);
     assert_eq!(event.attributes["line"], error.position.line);
     assert_eq!(event.attributes["byte"], error.position.byte);
+    let header_error = code == "invalid_headers";
+    assert_eq!(event.attributes["record"], if header_error { 0 } else { 1 });
+    assert_eq!(event.attributes["line"], if header_error { 1 } else { 2 });
+    let byte = if header_error {
+        0
+    } else {
+        csv.find('\n').unwrap() + 1
+    };
+    assert_eq!(event.attributes["byte"], byte);
     assert_eq!(event.attributes["source_id"], "csv-1");
     assert_eq!(event.correlation_id.as_deref(), Some("run-1"));
     assert!(!format!("{event:?}").contains("secret"));
@@ -90,9 +101,12 @@ fn malformed_input_has_safe_classification(
 
 struct FailingReader;
 
-#[test]
-fn csv_outcomes_and_processing_failures_preserve_record_provenance() {
-    let csv = "type,client,tx,amount\ndeposit,1,42,5\n";
+#[rstest]
+fn csv_outcomes_and_processing_failures_preserve_record_provenance(
+    #[values("\n", "\r\n")] newline: &str,
+) {
+    let header = format!("type,client,tx,amount{newline}");
+    let csv = format!("{header}deposit,1,42,5{newline}");
     let record = Input::new(csv.as_bytes(), source())
         .unwrap()
         .next()
@@ -106,7 +120,7 @@ fn csv_outcomes_and_processing_failures_preserve_record_provenance() {
     for event in [applied, failed] {
         assert_eq!(event.attributes["record"], 1);
         assert_eq!(event.attributes["line"], 2);
-        assert_eq!(event.attributes["byte"], record.position.byte);
+        assert_eq!(event.attributes["byte"], header.len());
         assert_eq!(event.attributes["transaction_id"], 42);
     }
 }

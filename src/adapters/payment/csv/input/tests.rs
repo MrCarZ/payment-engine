@@ -9,6 +9,7 @@ use rstest::rstest;
 
 use super::{Input, InputError, Type as ErrorType};
 use crate::{
+    adapters::payment::csv::RecordPosition,
     domain::payment::{ClientId, LifecycleAction, TransactionId, transaction::Type},
     manager::payment::{Outcome, PaymentManager, Request, SourceContext},
 };
@@ -19,6 +20,100 @@ fn source() -> SourceContext {
         source_id: "source-1".into(),
         partner_id: Some("partner-1".into()),
     }
+}
+
+struct ChunkedReader {
+    input: Cursor<Vec<u8>>,
+    chunk_size: usize,
+}
+
+impl Read for ChunkedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> IoResult<usize> {
+        let length = buffer.len().min(self.chunk_size);
+        self.input.read(&mut buffer[..length])
+    }
+}
+
+#[rstest]
+fn record_positions_preserve_source_bytes_and_physical_lines(
+    #[values("\n", "\r\n")] newline: &str,
+    #[values(1, 8192)] chunk_size: usize,
+) {
+    let header = format!("type,client,tx,amount{newline}");
+    let first = format!("deposit,1,1,2{newline}");
+    let second = format!("dispute,1,1,\"ignored{newline}amount\"{newline}");
+    let third = format!("resolve,1,1,{newline}");
+    let data = format!("{header}{first}{second}{third}");
+    let reader = ChunkedReader {
+        input: Cursor::new(data.into_bytes()),
+        chunk_size,
+    };
+    let input = Input::new(reader, source()).unwrap();
+    let positions: Vec<_> = input.map(|row| row.unwrap().position).collect();
+    assert_eq!(
+        positions,
+        vec![
+            RecordPosition {
+                record: 1,
+                line: 2,
+                byte: header.len() as u64
+            },
+            RecordPosition {
+                record: 2,
+                line: 3,
+                byte: (header.len() + first.len()) as u64
+            },
+            RecordPosition {
+                record: 3,
+                line: 5,
+                byte: (header.len() + first.len() + second.len()) as u64
+            },
+        ]
+    );
+}
+
+#[rstest]
+#[case::invalid_field(b"deposit,1,2,invalid", false)]
+#[case::invalid_utf8(b"deposit,1,2,\xff", true)]
+fn input_errors_preserve_positions_and_remain_terminal(
+    #[case] invalid: &[u8],
+    #[case] csv_error: bool,
+    #[values("\n", "\r\n")] newline: &str,
+    #[values(1, 8192)] chunk_size: usize,
+) {
+    let prefix = format!("type,client,tx,amount{newline}deposit,1,1,2{newline}");
+    let mut bytes = prefix.as_bytes().to_vec();
+    bytes.extend_from_slice(invalid);
+    bytes.extend_from_slice(format!("{newline}deposit,1,3,10{newline}").as_bytes());
+    let reader = ChunkedReader {
+        input: Cursor::new(bytes),
+        chunk_size,
+    };
+    let mut input = Input::new(reader, source()).unwrap();
+    assert!(input.next().unwrap().is_ok());
+    let error = input.next().unwrap().unwrap_err();
+    assert_eq!(
+        error.position,
+        RecordPosition {
+            record: 2,
+            line: 3,
+            byte: prefix.len() as u64
+        }
+    );
+    assert_eq!(*error.context.source, source());
+    if csv_error {
+        assert!(matches!(error.error_type, ErrorType::Csv(_)));
+    } else {
+        assert!(matches!(
+            error.error_type,
+            ErrorType::InvalidField {
+                field: "amount",
+                ..
+            }
+        ));
+    }
+    assert!(input.next().is_none());
+    assert!(input.next().is_none());
 }
 
 fn first(input: &str) -> Result<Request, InputError> {
