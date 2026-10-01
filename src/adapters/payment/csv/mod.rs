@@ -1,6 +1,7 @@
 //! CSV representations and streaming I/O for the payment service.
 
 pub mod input;
+pub mod output;
 pub mod row;
 
 /// CSV record index (header is zero), one-based line, and zero-based byte offset.

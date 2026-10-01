@@ -2,7 +2,7 @@
 
 A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
-## Current status: Phase 7
+## Current status: Phase 8
 
 The crate and component boundaries are established. The binary validates exactly
 one input-path argument. It does not open files or process payments yet. A valid
@@ -71,6 +71,17 @@ final column. Other field-count mismatches are rejected. Parsing failures identi
 the source, position, and invalid field without including the raw row. A header-only
 input is valid; an empty file is rejected for missing headers. The CLI is not yet
 wired to this adapter; that integration belongs to Phase 11.
+
+`adapters::payment::csv::output::write` accepts any `Write` destination and an
+iterator of `(ClientId, &Account)` snapshots, including `manager.accounts()`.
+It sorts by numeric client ID and emits `client,available,held,total,locked` with
+four fractional places and lowercase booleans. Empty account sets still produce
+the header. Output derives total through checked arithmetic, leaves accounts
+unchanged, and explicitly flushes the destination. Serialization, write, flush,
+and arithmetic failures propagate through `OutputError`. Sorting retains account
+references, not transaction history. Failed writes may leave partial output;
+atomic file publication remains the caller's responsibility. CLI integration
+is still reserved for Phase 11.
 
 ```sh
 cargo build
