@@ -308,3 +308,33 @@ active processing, not buffered input memory or the number of open trace files.
 ```sh
 cargo run -- first.csv second.csv
 ```
+
+## Per-run artifacts
+
+```text
+output/<run-id>/
+    accounts.csv
+    report.json
+    diagnostics.log
+    source-0001.trace.csv
+    source-0002.trace.csv    (batch runs)
+```
+
+The CLI preserves stdout account output while writing a copy to an exclusive
+`accounts.partial.csv`. Only a successful processing/output/trace lifecycle
+renames it to `accounts.csv`. Failed runs retain the partial file, which may be
+empty or contain incomplete output. The report includes run identity, status,
+elapsed time, input and artifact paths, outcome counts, and per-source batch results.
+Diagnostics record status, trace paths, and execution errors. Storage
+failures can prevent reports or logs from being fully written; these propagate
+as CLI failures and do not cause payments to be retried. Publication and flush
+provide no durable-storage guarantee.
+
+```sh
+cargo run -- --output-dir output transactions.csv
+cargo run -- --output-dir output first.csv second.csv
+```
+
+Every invocation creates a new run subdirectory, including failed batch preflight
+runs once output storage is initialized. The output directory and trace paths are
+printed to stderr. No program logs or traces are written beside input CSVs.

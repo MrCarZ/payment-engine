@@ -33,3 +33,5 @@ pub fn validate<R: Read>(
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use execution::execute_at;

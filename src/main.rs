@@ -1,25 +1,22 @@
-use payment_engine::bootstrap::{
-    config::Config,
-    payment::{batch::execute as execute_batch, execute},
-};
 use std::{env::args_os, io::stdout, process::ExitCode};
+
+use payment_engine::bootstrap::{artifacts::execute, config::Invocation};
+
 fn main() -> ExitCode {
-    let result = match Config::from_args(args_os().skip(1)) {
-        Ok(Config::Single(config)) => execute(config, stdout().lock())
-            .map(|execution| vec![execution.trace_path])
-            .map_err(|error| error.to_string()),
-        Ok(Config::Batch(config)) => execute_batch(config, stdout().lock())
-            .map(|execution| execution.trace_paths)
-            .map_err(|error| error.to_string()),
-        Err(error) => Err(error.to_string()),
-    };
-    match result {
-        Ok(paths) => {
-            for path in paths {
-                eprintln!("Trace log: {}", path.display());
+    match Invocation::from_args(args_os().skip(1)) {
+        Ok(invocation) => match execute(invocation, stdout().lock()) {
+            Ok(execution) => {
+                eprintln!("Output directory: {}", execution.directory.display());
+                for path in execution.trace_paths {
+                    eprintln!("Trace log: {}", path.display());
+                }
+                ExitCode::SUCCESS
             }
-            ExitCode::SUCCESS
-        }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        },
         Err(error) => {
             eprintln!("{error}");
             ExitCode::FAILURE

@@ -10,7 +10,7 @@ pub struct ArgumentError;
 impl Display for ArgumentError {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.write_str(
-            "Expected input path(s). Usage: payment-engine <transactions.csv> [more.csv ...]",
+            "Expected input path(s). Usage: payment-engine [--output-dir <directory>] <transactions.csv> [more.csv ...]",
         )
     }
 }

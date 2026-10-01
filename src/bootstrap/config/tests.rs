@@ -2,7 +2,20 @@ use std::{ffi::OsString, path::PathBuf};
 
 use rstest::rstest;
 
-use super::{Config, InputConfig};
+use super::{Config, InputConfig, Invocation};
+
+#[rstest]
+#[case(&["--output-dir"], false)]
+#[case(&["--output-dir", "out"], false)]
+#[case(&["--output-dir", "out", "--output-dir", "other", "one.csv"], false)]
+#[case(&["--output-dir", "out", "one.csv"], true)]
+fn validates_output_directory_option(#[case] args: &[&str], #[case] valid: bool) {
+    let result = Invocation::from_args(args.iter().map(OsString::from));
+    assert_eq!(result.is_ok(), valid);
+    if valid {
+        assert_eq!(result.unwrap().output_root, PathBuf::from("out"));
+    }
+}
 
 #[rstest]
 #[case(&[], 0)]

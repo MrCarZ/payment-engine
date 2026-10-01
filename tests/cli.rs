@@ -38,7 +38,8 @@ impl Fixture {
 
     fn invoke(&self) -> Output {
         Command::new(env!("CARGO_BIN_EXE_payment-engine"))
-            .current_dir(&self.directory)
+            .arg("--output-dir")
+            .arg(self.directory.join("output"))
             .arg(&self.input)
             .output()
             .unwrap()
@@ -98,7 +99,8 @@ impl Drop for Fixture {
 fn cli_rejects_missing_arguments_or_files(#[case] args: &[&str], #[case] diagnostic: &str) {
     let fixture = Fixture::new("");
     let output = Command::new(env!("CARGO_BIN_EXE_payment-engine"))
-        .current_dir(&fixture.directory)
+        .arg("--output-dir")
+        .arg(fixture.directory.join("output"))
         .args(args)
         .output()
         .unwrap();
@@ -122,6 +124,21 @@ fn successful_cli_outputs_accounts_and_creates_a_separate_csv_trace() {
     );
     let traces = fixture.traces();
     assert_eq!(traces.len(), 1);
+    let run = fixture.runs().pop().unwrap();
+    assert_eq!(read(run.join("accounts.csv")).unwrap(), b"client,available,held,total,locked\n3,4.0000,0.0000,4.0000,false\n9,4.0000,0.0000,4.0000,false\n");
+    assert!(!run.join("accounts.partial.csv").exists());
+    let report: Value =
+        from_str(&String::from_utf8(read(run.join("report.json")).unwrap()).unwrap()).unwrap();
+    assert_eq!(report["status"], "completed");
+    assert_eq!(report["summary"]["applied"], 5);
+    assert!(run.join("diagnostics.log").exists());
+    assert!(!read_dir(&fixture.directory).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .path()
+            .to_string_lossy()
+            .ends_with(".trace.csv")
+    }));
     let bytes = read(&traces[0]).unwrap();
     let mut reader = Reader::from_reader(bytes.as_slice());
     assert_eq!(
@@ -184,7 +201,8 @@ fn cli_handles_empty_and_invalid_inputs(#[case] csv: &str, #[case] success: bool
 fn missing_file_fails_without_stdout_or_trace() {
     let fixture = Fixture::new("");
     let output = Command::new(env!("CARGO_BIN_EXE_payment-engine"))
-        .current_dir(&fixture.directory)
+        .arg("--output-dir")
+        .arg(fixture.directory.join("output"))
         .arg(fixture.directory.join("missing.csv"))
         .output()
         .unwrap();
@@ -200,7 +218,8 @@ fn cli_processes_disjoint_csvs_with_shared_run_identity_and_separate_traces() {
     let other = fixture.directory.join("second.csv");
     write(&other, "type,client,tx,amount\ndeposit,2,77,2\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_payment-engine"))
-        .current_dir(&fixture.directory)
+        .arg("--output-dir")
+        .arg(fixture.directory.join("output"))
         .args([&fixture.input, &other])
         .output()
         .unwrap();
@@ -253,7 +272,8 @@ fn batch_preflight_failures_create_no_traces_or_account_output(
     let other = fixture.directory.join("second.csv");
     write(&other, csv).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_payment-engine"))
-        .current_dir(&fixture.directory)
+        .arg("--output-dir")
+        .arg(fixture.directory.join("output"))
         .args([&fixture.input, &other])
         .output()
         .unwrap();
@@ -267,7 +287,8 @@ fn batch_preflight_failures_create_no_traces_or_account_output(
 fn duplicate_batch_input_is_rejected_before_trace_setup() {
     let fixture = Fixture::new("type,client,tx,amount\n");
     let output = Command::new(env!("CARGO_BIN_EXE_payment-engine"))
-        .current_dir(&fixture.directory)
+        .arg("--output-dir")
+        .arg(fixture.directory.join("output"))
         .args([
             &fixture.input,
             &fixture.directory.join(".").join("payments with spaces.csv"),
@@ -278,6 +299,19 @@ fn duplicate_batch_input_is_rejected_before_trace_setup() {
     assert!(output.stdout.is_empty());
     assert!(fixture.traces().is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("duplicate batch source"));
+    let run = fixture.runs().pop().unwrap();
+    assert!(!run.join("accounts.csv").exists());
+    assert!(run.join("accounts.partial.csv").exists());
+    let report: Value =
+        from_str(&String::from_utf8(read(run.join("report.json")).unwrap()).unwrap()).unwrap();
+    assert_eq!(report["status"], "failed");
+    assert_eq!(report["summary"]["applied"], 0);
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("duplicate batch source")
+    );
 }
 
 #[test]
@@ -288,7 +322,8 @@ fn failed_batch_worker_suppresses_aggregate_accounts_and_keeps_traces() {
     let other = fixture.directory.join("second.csv");
     write(&other, "type,client,tx,amount\ndeposit,2,3,1\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_payment-engine"))
-        .current_dir(&fixture.directory)
+        .arg("--output-dir")
+        .arg(fixture.directory.join("output"))
         .args([&fixture.input, &other])
         .output()
         .unwrap();

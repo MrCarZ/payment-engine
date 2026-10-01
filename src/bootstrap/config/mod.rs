@@ -3,6 +3,37 @@ use std::{ffi::OsString, num::NonZeroUsize, path::PathBuf, thread::available_par
 mod error;
 pub use error::ArgumentError;
 
+#[derive(Debug)]
+pub struct Invocation {
+    pub config: Config,
+    pub output_root: PathBuf,
+}
+
+impl Invocation {
+    pub fn from_args(args: impl IntoIterator<Item = OsString>) -> Result<Self, ArgumentError> {
+        let mut args = args.into_iter();
+        let mut paths = Vec::new();
+        let mut output_root = None;
+        while let Some(arg) = args.next() {
+            if arg == "--output-dir" {
+                if output_root.is_some() {
+                    return Err(ArgumentError);
+                }
+                output_root = Some(PathBuf::from(args.next().ok_or(ArgumentError)?));
+            } else if arg == "--" {
+                paths.extend(args);
+                break;
+            } else {
+                paths.push(arg);
+            }
+        }
+        Ok(Self {
+            config: Config::from_args(paths)?,
+            output_root: output_root.unwrap_or_else(|| PathBuf::from("output")),
+        })
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct BatchConfig {
     pub input_paths: Vec<PathBuf>,
