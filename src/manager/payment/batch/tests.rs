@@ -4,10 +4,10 @@ use rstest::rstest;
 
 use crate::{
     domain::payment::{ClientId, LifecycleAction, TransactionId, transaction::Type},
-    manager::payment::Context,
+    manager::payment::{Context, Request, SourceContext},
 };
 
-use super::{Record, Request, Source, SourceContext, ValidatedBatch, ValidationError};
+use super::{Record, Source, ValidatedBatch, ValidationError};
 
 #[derive(Debug)]
 struct Envelope {
@@ -200,20 +200,21 @@ fn duplicate_source_ids_are_rejected_even_without_rows() {
 
 #[test]
 fn all_sources_must_belong_to_one_run() {
-    let mut other = source("b", vec![]);
-    other.context.run_id = "other-run".into();
+    let (mut context, records) = source("b", vec![]).into_parts();
+    context.run_id = "other-run".into();
+    let other = Source::new(context, records);
     let error = ValidatedBatch::try_from(vec![source("a", vec![]), other]).unwrap_err();
     assert!(matches!(error, ValidationError::RunMismatch { .. }));
 }
 
 #[test]
 fn forged_record_context_cannot_override_source_ownership() {
-    let mut source = source("a", vec![original(1, 1)]);
-    source.records[0].context.source = Arc::new(SourceContext {
+    let (context, mut records) = source("a", vec![original(1, 1)]).into_parts();
+    records[0].context.source = Arc::new(SourceContext {
         run_id: "batch-1".into(),
         source_id: "b".into(),
         partner_id: None,
     });
-    let error = ValidatedBatch::try_from(vec![source]).unwrap_err();
+    let error = ValidatedBatch::try_from(vec![Source::new(context, records)]).unwrap_err();
     assert!(matches!(error, ValidationError::ContextMismatch { .. }));
 }
