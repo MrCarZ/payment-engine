@@ -3,11 +3,46 @@
 ## Table of contents
 
 1. [Overview](#1-overview)
+
 2. [Usage](#2-usage)
+    - [Single CSV](#single-csv)
+    - [Batch CSVs](#batch-csvs)
+    - [Run artifacts](#run-artifacts)
+
 3. [Layout of the project](#3-layout-of-the-project)
+    - [How the entities relate](#how-the-entities-relate)
+    - [Execution in small steps](#execution-in-small-steps)
+        - [Step 1: Prepare the run](#step-1-prepare-the-run)
+        - [Step 2: Prepare the input](#step-2-prepare-the-input)
+        - [Step 3: Process one request](#step-3-process-one-request)
+        - [Step 4: Record the outcome](#step-4-record-the-outcome)
+        - [Step 5: Publish account snapshots](#step-5-publish-account-snapshots)
+        - [Step 6: Finalize traces and artifacts](#step-6-finalize-traces-and-artifacts)
+
 4. [Assumptions](#4-assumptions)
+    - [One asset account per client](#one-asset-account-per-client)
+    - [Exact money and positive original amounts](#exact-money-and-positive-original-amounts)
+    - [Withdrawals use available funds](#withdrawals-use-available-funds)
+    - [Only accepted deposits can be disputed](#only-accepted-deposits-can-be-disputed)
+    - [Disputes hold the complete original amount](#disputes-hold-the-complete-original-amount)
+    - [Lifecycle actions use the stored amount and owner](#lifecycle-actions-use-the-stored-amount-and-owner)
+    - [Lifecycle prerequisites are required](#lifecycle-prerequisites-are-required)
+    - [Chargeback is terminal and locks the account](#chargeback-is-terminal-and-locks-the-account)
+    - [Original transaction IDs identify retries within a run](#original-transaction-ids-identify-retries-within-a-run)
+    - [Lifecycle retries follow state rather than an idempotency key](#lifecycle-retries-follow-state-rather-than-an-idempotency-key)
+    - [Input order is authoritative](#input-order-is-authoritative)
+    - [Batch files own disjoint partitions](#batch-files-own-disjoint-partitions)
+    - [Invalid input stops processing](#invalid-input-stops-processing)
+    - [Synchronous processing within each CSV](#synchronous-processing-within-each-csv)
+
 5. [Tests and Robustness](#5-tests-and-robustness)
+    - [Intended observability integration](#intended-observability-integration)
+        - [Structured logging strategy](#structured-logging-strategy)
+        - [Metrics strategy](#metrics-strategy)
+    - [Current limits](#current-limits)
+
 6. [Sample generator script usage](#6-sample-generator-script-usage)
+
 7. [Used libraries](#7-used-libraries)
 
 ## 1. Overview
@@ -29,8 +64,6 @@ the current CSV sink represents the telemetry that integration would receive.
 
 Processing state is in memory for one run. The project does not implement a
 network server, durable payment storage, or external observability integrations.
-The [implementation plan](docs/implementation-plan.md) records the phased work
-and remaining limitations.
 
 ## 2. Usage
 
@@ -182,8 +215,6 @@ tests/
         expected/      # reference account snapshots
 scripts/
     generate_payments.py
-docs/
-    implementation-plan.md
 output/                # generated run artifacts, ignored by Git
 ```
 
