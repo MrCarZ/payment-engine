@@ -8,7 +8,8 @@ use crate::{
         payment::{AmountError, MoneyError},
     },
     manager::payment::{
-        ProcessingError, Report,
+        Context, ProcessingError, Report, Request,
+        run::{InputFailure, Record as RunRecord},
         trace::{
             processing_failed as payment_processing_failed,
             request_processed as payment_request_processed, source_attributes,
@@ -18,6 +19,27 @@ use crate::{
 
 use super::RecordPosition;
 use super::input::{FieldError, InputError, Record, Type};
+
+impl RunRecord for Record {
+    fn request(&self) -> Request {
+        self.request
+    }
+    fn context(&self) -> &Context {
+        &self.context
+    }
+    fn processed_event(&self, report: Report) -> Event {
+        request_processed(self, report)
+    }
+    fn failed_event(&self, error: ProcessingError) -> Event {
+        processing_failed(self, error)
+    }
+}
+
+impl InputFailure for InputError {
+    fn event(&self) -> Event {
+        input_failed(self)
+    }
+}
 
 /// Adds CSV provenance to the transport-independent payment outcome mapping.
 pub fn request_processed(record: &Record, report: Report) -> Event {

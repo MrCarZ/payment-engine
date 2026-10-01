@@ -8,6 +8,7 @@ use crate::domain::payment::{
 mod context;
 mod error;
 mod request;
+pub mod run;
 pub mod trace;
 
 pub use context::{Context, SourceContext};

@@ -2,11 +2,12 @@
 
 A Rust library and CLI for CSV payment processing, built in reviewable phases.
 
-## Current status: Phase 10
+## Current status: Phase 11
 
-The crate and component boundaries are established. The binary validates exactly
-one input-path argument. It does not open files or process payments yet. A valid
-invocation succeeds with an explicit status message on stderr and empty stdout.
+The binary accepts exactly one input path, streams its CSV rows through the
+payment manager, and writes sorted account balances to stdout. Structured traces
+are written to a separate CSV sidecar; diagnostics and its path use stderr.
+The bootstrap is synchronous and processes one CSV per invocation.
 
 The domain now exposes distinct client (`u16`) and transaction (`u32`) identifiers,
 signed `Money`, and strictly positive `PositiveAmount` transaction amounts.
@@ -69,8 +70,8 @@ order. Surrounding field whitespace is trimmed. Monetary rows require positive
 amounts; lifecycle rows ignore their amount field and may omit it when it is the
 final column. Other field-count mismatches are rejected. Parsing failures identify
 the source, position, and invalid field without including the raw row. A header-only
-input is valid; an empty file is rejected for missing headers. The CLI is not yet
-wired to this adapter; that integration belongs to Phase 11.
+input is valid; an empty file is rejected for missing headers. The CLI uses this
+adapter and returns a failure exit status on input errors.
 
 `adapters::payment::csv::output::write` accepts any `Write` destination and an
 iterator of `(ClientId, &Account)` snapshots, including `manager.accounts()`.
@@ -80,8 +81,8 @@ the header. Output derives total through checked arithmetic, leaves accounts
 unchanged, and explicitly flushes the destination. Serialization, write, flush,
 and arithmetic failures propagate through `OutputError`. Sorting retains account
 references, not transaction history. Failed writes may leave partial output;
-atomic file publication remains the caller's responsibility. CLI integration
-is still reserved for Phase 11.
+atomic file publication remains the caller's responsibility. The CLI invokes
+this adapter after processing and flushing request traces successfully.
 
 ```sh
 cargo build
@@ -104,21 +105,21 @@ CLI integration tests stay in the top-level `tests` directory.
 - `adapters/observability`: CSV delivery and in-memory recording.
 - `domain/clock`: shared timestamp contract.
 - `adapters/clock`: system clock implementation.
-- `runtime`: execution configuration, wiring, and lifecycle.
+- `bootstrap`: execution configuration, wiring, and lifecycle.
 - Binary: process arguments, diagnostics, and exit status.
 
 Components will be constructed explicitly rather than accessed through globals.
 Future adapters call managers, which call domain methods. Payment
 trace mapping stays outside the shared observability service.
 
-CSV, Serde, JSON, and UTC timestamp dependencies are declared for later phases.
+CSV, Serde, JSON, and UTC timestamp dependencies support the current bootstrap.
 Account output is reserved for stdout; diagnostics use stderr.
 
 Payment manager implementation, outcomes/reasons, and original-record storage
 live in `manager/payment/mod.rs`, with unit tests in `tests.rs`. Requests and
 errors live in `request.rs` and `error.rs`, re-exported through the payment module.
 
-Module-local errors for accounts, money, transaction transitions, and runtime
+Module-local errors for accounts, money, transaction transitions, and bootstrap
 arguments live in each module's `error.rs`, re-exported through its `mod.rs`.
 Identifier parsing retains the standard library `ParseIntError`.
 
@@ -151,8 +152,8 @@ error preserved through its source chain. The sink does not select files or writ
 
 `adapters::observability::memory::InMemoryTraceService` records timestamped structured events
 in order for consumer tests. The shared service contains no payment rules or
-partner-specific event mappings. Runtime construction and mandatory failure
-handling belong to Phase 11.
+partner-specific event mappings. The bootstrap constructs the sink and handles
+delivery failures explicitly.
 
 Observability follows the same domain/manager/adapter structure as payment.
 The trace contract has no CSV dependencies, and event types depend on neither
@@ -189,5 +190,72 @@ adapter; API/webhook adapters can reuse the manager mapping independently.
 Run `Summary` counts applied, ignored, rejected, replayed, input errors, and
 processing errors. Applied/ignored/rejected exclude replays; the replay count
 includes retries of any original outcome. Run state is Completed or Failed,
-with Info or Error severity respectively. Accounting, delivery, flushing, and
-CLI wiring remain the responsibility of the upcoming run coordinator.
+with Info or Error severity respectively. Run accounting and ordered processing
+belong to `manager::payment::run::Coordinator`; publication, final flushing, and
+CLI wiring belong to the bootstrap.
+
+## Synchronous execution
+
+`bootstrap::payment::run` accepts injected input/output streams, source context, and an
+object-safe trace service. It processes records in input order, counts outcomes
+with replays separately, and continues on business rejections or ignored events.
+Input errors, fatal processing failures, and trace delivery failures stop the run.
+No payment is retried due to a delivery failure.
+
+Account output begins only after all input has processed successfully and the
+request trace buffer has flushed. Both successful and failed runs attempt a
+run-summary event and explicit final flush. `RunError` retains the primary
+failure, work counts, and additional trace errors. Processing errors identify the
+source and CSV position. No accounts are published on processing/input failures.
+Output failures may leave partial stdout; a summary-delivery or final-flush
+failure may occur after complete account output, and still yields a failure exit
+status. A Completed summary describes processing/output completion, not a
+guarantee that the final trace flush succeeded. Flush is not durable storage.
+
+`bootstrap::payment::execute` opens the input and creates
+`<input-path>.<run-id>.trace.csv` with exclusive creation. The run ID combines a
+UTC nanosecond timestamp, process ID, and process-local sequence. Existing traces
+and input files are never overwritten. The input directory must allow creation
+of the sidecar. Setup failures stop before processing; failures before the trace
+service is initialized cannot produce a summary. Bootstrap failures include the
+trace path in stderr diagnostics. Generated sidecars are ignored by Git.
+
+```sh
+cargo run -- transactions.csv > accounts.csv
+```
+
+Success exits with status zero; argument, setup, processing, output, and trace
+failures exit with a nonzero status. The CLI supplies the input path as source
+identity and leaves partner identity absent. Library callers can supply their
+own run/source/partner context and destinations through `run`. Batch contract
+validation and concurrent processing remain for Phases 12 and 13.
+
+Bootstrap files are organized by responsibility:
+
+```text
+bootstrap/
+├── mod.rs
+├── config/
+│   ├── mod.rs
+│   ├── error.rs
+│   └── tests.rs
+└── payment/
+    ├── mod.rs
+    ├── setup.rs
+    ├── error.rs
+    └── tests.rs
+```
+
+The root only declares modules. `config` validates arguments and preserves
+native paths. `payment/setup.rs` constructs input, trace file, clock-backed run
+identity, and source context. `payment/mod.rs` connects CSV input to the manager
+coordinator, publishes account output, and finalizes traces. Execution errors
+remain in `payment/error.rs` with source/position context and secondary failures.
+
+`manager::payment::run` owns its `Coordinator`, outcome `Summary`, and
+transport-independent failures. Its `Record` and `InputFailure` contracts let
+adapters supply validated requests and enrich events with provenance. The CSV
+adapter implements these contracts without exposing its trace module. The
+coordinator knows no CSV types, readers, writers, or file paths. Non-CSV callers
+can use the default payment event mapping. Financial state stays in
+`PaymentManager`; bootstrap retains resource lifecycle ownership.

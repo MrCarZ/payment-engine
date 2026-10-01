@@ -9,17 +9,7 @@ use crate::domain::{
 
 use super::{Context, Outcome, ProcessingError, Reason, Report, Request, SourceContext};
 
-/// Counts supplied by the run coordinator. Applied/ignored/rejected exclude
-/// replays; replayed counts all original retries regardless of stored outcome.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Summary {
-    pub applied: u64,
-    pub ignored: u64,
-    pub rejected: u64,
-    pub replayed: u64,
-    pub input_errors: u64,
-    pub processing_errors: u64,
-}
+pub use super::run::Summary;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
